@@ -1,2 +1,3 @@
 node_modules/
 harness/out/
+deploy/lovelace-before.json
