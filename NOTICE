@@ -1,0 +1,9 @@
+pet-feeder-card
+Copyright 2026 flan <holden@arch.fyi>
+
+Parts of this project were written with the assistance of AI coding agents.
+
+docs/whisker-reference.png is a screenshot from the Whisker Card project
+(https://github.com/homeassistant-extras/whisker, MIT licence), kept as a visual reference.
+docs/freshfeed-product.jpg is PetSafe's product photo of the FreshFeed (PFD00-18290),
+kept as an artwork reference only.
