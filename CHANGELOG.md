@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0] — 2026-10-20
+
+### Added
+- Meal tray row for the FreshFeed: one tile per compartment showing which meals are
+  eaten, which one is in the serving window and which are still full, with "4 of 6 left" /
+  "Last meal" / "Refill needed" and the next meal time under the next compartment. It
+  replaces the food gauge when a `counter` or `meals_left` entity is configured.
+- `meal_slots` option (1-12, default 6 for `freshfeed`) and the `meals_left` entity key.
+- Pure `mealSlots()` helper with unit tests; harness checks for the tray, including
+  tile fit inside a narrow card.
+
 ## [0.1.0] — 2026-10-20
 
 ### Added

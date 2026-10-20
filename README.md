@@ -7,6 +7,8 @@ a chip, a food gauge and a metrics footer. Two models have artwork and defaults:
 - `freshfeed` -- PetSafe FreshFeed refrigerated wet-food feeder (PFD00-18290)
 - `aqara_c1` -- Aqara Smart Pet Feeder C1 (ZNCWWSQ01LM), via Zigbee2MQTT
 
+On the FreshFeed a meal tray shows which of the 6 compartments are eaten, serving or
+still full (`counter` or `meals_left` entity, `meal_slots` to change the count).
 Feed actions need two taps within 4 seconds unless `confirm: false`. The full
 configuration reference is in `docs/card-spec.md`; working examples are in
 `deploy/cards.json`.
