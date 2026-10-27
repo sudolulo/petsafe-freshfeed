@@ -157,11 +157,10 @@ def _open_root(config_root, descriptors):
     named = opened = _fstat(fd)
     for component in _components(config_root):
         fd, named, opened = _open_at(fd, component, descriptors)
-    # Owned real directory. 0755 is fine; group/other write is refused because
-    # it would let another account rename the namespace out from under us.
+    # Owned real directory; per spec its mode is not constrained (it need not
+    # be 0700). Privacy is enforced on the 0700 namespace/binding directories.
     for info in (named, opened):
-        _require(stat.S_ISDIR(info.st_mode) and info.st_uid == _euid()
-                 and stat.S_IMODE(info.st_mode) & 0o022 == 0)
+        _require(stat.S_ISDIR(info.st_mode) and info.st_uid == _euid())
     return fd, _identity(opened)
 
 

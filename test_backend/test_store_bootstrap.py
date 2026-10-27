@@ -130,7 +130,6 @@ class BootstrapBase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(error.args, ("store_bootstrap_fault",))
         self.assertIsNone(error.__cause__)
         self.assertIsNone(error.__context__)
-        self.assertTrue(error.__suppress_context__ is False or error.__context__ is None)
         rendered = "".join(traceback.format_exception(error)) + repr(error)
         for marker in (str(self.base), *private):
             self.assertNotIn(marker, rendered)
@@ -166,8 +165,11 @@ class ProvisionAndReopenTests(BootstrapBase):
         self.assertTrue(await witness.async_wait_idle(3))
         self.assert_settled()
 
-    async def test_root_0700_and_0755_provision_with_private_app_dirs(self):
-        for root_mode in (0o700, 0o755):
+    async def test_owned_root_any_mode_provisions_with_private_app_dirs(self):
+        # The spec requires only an existing euid-owned real directory; its mode
+        # is not constrained (0775 is the default under umask 0002).
+        root_modes = (0o700, 0o755, 0o775, 0o777)
+        for root_mode in root_modes:
             with self.subTest(root_mode=oct(root_mode)):
                 root = self.new_root(f"root-{root_mode:o}", root_mode)
                 with self.spy_provision():
@@ -186,7 +188,7 @@ class ProvisionAndReopenTests(BootstrapBase):
                 self.assertNotIn(str(self.base), str(descriptor))
                 witness = open_store(str(root), binding_id=BINDING, store_id=STORE)
                 self.assertIsNone(await witness.async_load_last_intent())
-        self.assertEqual(len(self.provision_calls), 2)
+        self.assertEqual(len(self.provision_calls), len(root_modes))
         self.assert_settled()
 
     async def test_descriptor_is_read_only(self):
