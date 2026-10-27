@@ -123,9 +123,16 @@ class BootstrapBase(unittest.IsolatedAsyncioTestCase):
             yield
 
     async def fault(self, awaitable, private=()):
-        with self.assertRaises(StoreBootstrapError) as caught:
+        # Capture any Exception -- never BaseException, so cancellation still
+        # propagates -- so that an unnormalized raw error is an assertion
+        # failure here rather than a test error.
+        try:
             await awaitable
-        error = caught.exception
+        except Exception as exc:
+            error = exc
+        else:
+            self.fail("provision was acknowledged instead of refused")
+        self.assertIsInstance(error, StoreBootstrapError)
         self.assertEqual(str(error), "store_bootstrap_fault")
         self.assertEqual(error.args, ("store_bootstrap_fault",))
         self.assertIsNone(error.__cause__)
@@ -134,6 +141,19 @@ class BootstrapBase(unittest.IsolatedAsyncioTestCase):
         for marker in (str(self.base), *private):
             self.assertNotIn(marker, rendered)
         return error
+
+    @contextlib.contextmanager
+    def spy_postcheck(self):
+        """Real postcheck, recording each entry and each returned verdict."""
+        calls, results = [], []
+
+        def spy(*args):
+            calls.append(args)
+            result = REAL_POSTCHECK(*args)
+            results.append(result)
+            return result
+        with patch.object(bs, "_postcheck", side_effect=spy):
+            yield calls, results
 
     def assert_settled(self):
         self.assertEqual(owned_threads(), [])
@@ -534,6 +554,166 @@ class FilesystemBoundaryTests(BootstrapBase):
                 if label == "db":
                     self.assertEqual(mode(db), 0o644)
                 self.assert_settled()
+
+
+class FakeIdleWitness:
+    """Stands in for a provisioned witness; only async_wait_idle is reachable."""
+
+    def __init__(self, idle):
+        self.idle = idle
+        self.waits = []
+
+    async def async_wait_idle(self, timeout):
+        self.waits.append(timeout)
+        if isinstance(self.idle, Exception):
+            raise self.idle
+        return self.idle
+
+
+class SqliteProvisionRefusalTests(BootstrapBase):
+    """A refused, failed or never-idle SQLite provision is normalized, unacknowledged
+    and never reaches the final postcheck."""
+
+    MARKER = "private-sqlite-provision-marker"
+
+    async def refused(self, label, outcome):
+        root = self.new_root(label)
+        binding_dir = root / NS / BINDING
+        calls = []
+
+        async def provision(cls, path, *, store_id, binding_id):
+            calls.append((path, store_id, binding_id))
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+        with patch.object(sw.SQLiteIntentWitness, "async_provision", classmethod(provision)), \
+             self.spy_postcheck() as (post_calls, _):
+            await self.fault(async_provision_store(
+                str(root), binding_id=BINDING, store_id=STORE), (self.MARKER,))
+        self.assertEqual(calls, [(str(binding_dir / "intent.sqlite"), STORE, BINDING)])
+        self.assertEqual(post_calls, [])
+        # The prepared reservation stays as it was, for human recovery.
+        self.assertEqual(os.listdir(binding_dir), [])
+        self.assertEqual(mode(binding_dir), 0o700)
+        self.assert_settled()
+
+    async def test_provision_raising_is_normalized_and_skips_postcheck(self):
+        await self.refused("sqlite-raises", RuntimeError(self.MARKER))
+
+    async def test_provision_never_idle_is_refused_and_skips_postcheck(self):
+        witness = FakeIdleWitness(False)
+        await self.refused("sqlite-not-idle", witness)
+        self.assertEqual(witness.waits, [5.0])
+
+    async def test_idle_wait_raising_is_normalized_and_skips_postcheck(self):
+        witness = FakeIdleWitness(RuntimeError(self.MARKER))
+        await self.refused("sqlite-idle-raises", witness)
+        self.assertEqual(witness.waits, [5.0])
+
+
+class PostcheckTamperTests(BootstrapBase):
+    """After a real, idle provision, each single postcheck predicate violation is
+    refused by the executed final postcheck. Every fixture violates exactly one
+    predicate; the others are asserted to still hold so no sibling guard masks it."""
+
+    DB = "intent.sqlite"
+
+    async def tampered(self, label, tamper, stat_hook=None):
+        root = self.new_root(label)
+        db = root / NS / BINDING / self.DB
+        calls, idle, db_stats = [], [], []
+
+        async def provision(cls, path, *, store_id, binding_id):
+            calls.append(path)
+            witness = await REAL_PROVISION(cls, path, store_id=store_id, binding_id=binding_id)
+            idle.append(await witness.async_wait_idle(3))
+            tamper(Path(path))
+            return witness
+
+        def stat_at(fd, name):
+            info = REAL_STAT_AT(fd, name)
+            if name != self.DB:
+                return info
+            db_stats.append(name)
+            return stat_hook(info) if stat_hook else info
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(
+                sw.SQLiteIntentWitness, "async_provision", classmethod(provision)))
+            post_calls, post_results = stack.enter_context(self.spy_postcheck())
+            stack.enter_context(patch.object(bs, "_stat_at", side_effect=stat_at))
+            await self.fault(async_provision_store(
+                str(root), binding_id=BINDING, store_id=STORE))
+        self.assertEqual(calls, [str(db)])
+        self.assertEqual(idle, [True])
+        self.assertEqual(len(post_calls), 1)
+        self.assertEqual(post_results, [False])
+        self.assert_settled()
+        return root, db, db_stats
+
+    def assert_valid_db(self, info, nlink=1):
+        self.assertTrue(stat.S_ISREG(info.st_mode))
+        self.assertEqual(stat.S_IMODE(info.st_mode), 0o600)
+        self.assertEqual(info.st_uid, os.geteuid())
+        self.assertEqual(info.st_nlink, nlink)
+        self.assertGreater(info.st_size, 0)
+
+    async def test_stray_entry_in_binding_dir_is_refused(self):
+        root, db, _ = await self.tampered(
+            "tamper-stray", lambda path: (path.parent / "stray").write_bytes(b""))
+        self.assertEqual(sorted(os.listdir(db.parent)), [self.DB, "stray"])
+        self.assert_valid_db(os.lstat(db))
+
+    async def test_hardlinked_database_is_refused(self):
+        # The extra link lives in the namespace, not the binding directory, so the
+        # binding listing stays exactly [database]: only the nlink guard rejects.
+        root, db, _ = await self.tampered(
+            "tamper-hardlink", lambda path: os.link(path, path.parent.parent / "extra-link"))
+        self.assertEqual(os.listdir(db.parent), [self.DB])
+        self.assert_valid_db(os.lstat(db), nlink=2)
+
+    async def test_truncated_database_is_refused(self):
+        root, db, _ = await self.tampered("tamper-truncate", lambda path: os.truncate(path, 0))
+        self.assertEqual(os.listdir(db.parent), [self.DB])
+        info = os.lstat(db)
+        self.assertTrue(stat.S_ISREG(info.st_mode))
+        self.assertEqual((stat.S_IMODE(info.st_mode), info.st_uid, info.st_nlink, info.st_size),
+                         (0o600, os.geteuid(), 1, 0))
+
+    async def test_fifo_in_place_of_database_is_refused_without_open(self):
+        def fifo(path):
+            os.unlink(path)
+            os.mkfifo(path, 0o600)
+        # A blocking open of the FIFO would hang the worker; settling proves none.
+        root, db, _ = await self.tampered("tamper-fifo", fifo)
+        self.assertEqual(os.listdir(db.parent), [self.DB])
+        self.assertTrue(stat.S_ISFIFO(os.lstat(db).st_mode))
+
+    async def test_non_regular_database_type_alone_is_refused(self):
+        # Only the file type is faked; size, nlink, owner and permission bits are the
+        # real regular database's, so neither a FIFO's zero size nor a directory's
+        # link count can stand in for the regular-file guard.
+        def as_fifo(info):
+            values = list(info)
+            values[0] = stat.S_IFIFO | stat.S_IMODE(info.st_mode)
+            return os.stat_result(values)
+        root, db, db_stats = await self.tampered(
+            "tamper-type", lambda path: None, stat_hook=as_fifo)
+        self.assertEqual(db_stats, [self.DB])
+        self.assertEqual(os.listdir(db.parent), [self.DB])
+        self.assert_valid_db(os.lstat(db))
+
+    async def test_foreign_database_owner_alone_is_refused(self):
+        # Only the database's own st_uid is faked; _euid and every directory
+        # identity check see real values.
+        def foreign(info):
+            values = list(info)
+            values[4] = os.geteuid() + 1
+            return os.stat_result(values)
+        root, db, db_stats = await self.tampered(
+            "tamper-owner", lambda path: None, stat_hook=foreign)
+        self.assertEqual(db_stats, [self.DB])
+        self.assertEqual(os.listdir(db.parent), [self.DB])
+        self.assert_valid_db(os.lstat(db))
 
 
 class ConcurrencyTests(BootstrapBase):
