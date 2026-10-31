@@ -3,6 +3,11 @@ Copyright 2026 flan <holden@arch.fyi>
 
 Parts of this project were written with the assistance of AI coding agents.
 
+The raw-data header's six-compartment feeder mark is original project artwork,
+not a PetSafe manufacturer logo. PetSafe and FreshFeed are trademarks of their
+respective owners. This project is not affiliated with either trademark owner,
+and the card includes no external manufacturer artwork.
+
 docs/whisker-reference.png is a screenshot from the Whisker Card project
 (https://github.com/homeassistant-extras/whisker, MIT licence), kept as a visual reference.
 docs/freshfeed-product.jpg is PetSafe's product photo of the FreshFeed (PFD00-18290),

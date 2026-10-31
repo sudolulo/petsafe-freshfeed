@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0] - 2026-10-30
+
+### Added
+- Opt-in, read-only FreshFeed mode for displaying selected local Home Assistant entity
+  names and literal states without assigning data-point meanings or offering controls.
+- Raw observations panel with distinct missing, unknown, unavailable, and available states,
+  plus responsive visual coverage and live-resource-only deployment guidance.
+
 ## [0.2.0] — 2026-10-20
 
 ### Added
