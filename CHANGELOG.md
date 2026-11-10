@@ -3,10 +3,20 @@
 ## [0.3.0] - 2026-10-30
 
 ### Added
-- Opt-in, read-only FreshFeed mode for displaying selected local Home Assistant entity
+- Opt-in, read-only FreshFeed mode for displaying selected Home Assistant entity
   names and literal states without assigning data-point meanings or offering controls.
 - Raw observations panel with distinct missing, unknown, unavailable, and available states,
   plus responsive visual coverage and live-resource-only deployment guidance.
+
+### Changed
+- Existing FreshFeed standard cards now display `Unknown` for absent or unrecognized
+  statuses rather than implying readiness. Offline and fault precedence is unchanged.
+- FreshFeed `last_fed` now requires a valid, explicitly zoned timestamp at or before the
+  current time. Non-timestamp states no longer fall back to `last_changed` and display
+  `Unknown` instead. Operators upgrading existing cards must bind a verified last-feed
+  timestamp to retain this display; Aqara's `last_changed` fallback is unchanged.
+- Raw mode does not verify whether selected entities are local or cloud sourced; operators
+  must verify their bindings when local provenance matters.
 
 ## [0.2.0] — 2026-10-20
 

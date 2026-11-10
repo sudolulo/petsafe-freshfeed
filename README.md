@@ -65,7 +65,7 @@ tools/with-ha-token.sh node tools/shoot-live.mjs
 
 ## Read-only raw device data
 
-`mode: raw` is an opt-in view for locally exposed Home Assistant sensor states whose
+`mode: raw` is an opt-in view for selected Home Assistant sensor states whose
 meanings have not been verified. Select the `aqara_c1` model for Aqara C1 devices;
 `model: aqara_c1` with `mode: raw` is rejected. Raw data uses only the Home Assistant
 entities you select and infers no FreshFeed semantics. It preserves the selected model's artwork but
