@@ -1,0 +1,132 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "PetSafe FreshFeed",
+        "description": "Observe {title} through its tuya_local raw entities. Without controls no commands are sent to the feeder.",
+        "data": {
+          "source_entry_id": "tuya_local FreshFeed device",
+          "enable_controls": "Enable controls"
+        },
+        "data_description": {
+          "source_entry_id": "The tuya_local entry that uses the petsafe_freshfeed_raw profile.",
+          "enable_controls": "Creates a local retained-intent store once. Controls stay locked after every restart until you check the feeder and clear any uncertain command."
+        }
+      }
+    },
+    "abort": {
+      "no_source": "No tuya_local PetSafe FreshFeed device found.",
+      "already_configured": "This FreshFeed device is already configured.",
+      "binding_unavailable": "The tuya_local FreshFeed device registry entry could not be identified; controls were not enabled.",
+      "provision_failed": "The retained-intent store could not be created. Nothing was saved; an existing partial store is left untouched for manual recovery."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "PetSafe FreshFeed controls",
+        "description": "Enable Feed, Defrost, Refilled and schedule controls for this read-only entry.",
+        "data": {
+          "enable_controls": "Enable controls"
+        },
+        "data_description": {
+          "enable_controls": "Creates a local retained-intent store once. Controls stay locked after every restart until you check the feeder and clear any uncertain command."
+        }
+      }
+    },
+    "abort": {
+      "controls_already_enabled": "Controls are already enabled for this entry.",
+      "binding_unavailable": "The tuya_local FreshFeed device registry entry could not be identified; controls were not enabled.",
+      "provision_failed": "The retained-intent store could not be created. Nothing was saved; an existing partial store is left untouched for manual recovery."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "history": {"name": "History"},
+      "quick_feed": {"name": "Quick feed"},
+      "write_status": {"name": "Write status"},
+      "schedule": {
+        "name": "Schedule"
+      },
+      "status": {
+        "name": "Status"
+      },
+      "meals_left": {
+        "name": "Meals left"
+      },
+      "compartment": {
+        "name": "Compartment"
+      },
+      "food_level": {
+        "name": "Food level",
+        "state": {
+          "high": "High",
+          "low": "Low",
+          "empty": "Empty"
+        }
+      },
+      "last_fed": {
+        "name": "Last fed"
+      },
+      "last_feed_result": {
+        "name": "Last feed result",
+        "state": {
+          "dispensed": "Dispensed",
+          "refilled": "Refilled",
+          "skipped_empty": "Skipped (empty)",
+          "skipped_fault": "Skipped (fault)"
+        }
+      },
+      "meals_today": {
+        "name": "Meals today"
+      },
+      "next_meal": {
+        "name": "Next meal"
+      },
+      "defrost_remaining": {
+        "name": "Defrost remaining"
+      },
+      "brightness": {
+        "name": "Brightness"
+      },
+      "firmware_a": {
+        "name": "Firmware A"
+      },
+      "firmware_b": {
+        "name": "Firmware B"
+      },
+      "last_report": {
+        "name": "Last report"
+      }
+    },
+    "binary_sensor": {
+      "connected": {
+        "name": "Connected"
+      },
+      "fault": {
+        "name": "Fault"
+      },
+      "out_of_food": {
+        "name": "Out of food"
+      },
+      "defrosting": {
+        "name": "Defrosting"
+      }
+    },
+    "event": {
+      "feeding": {
+        "name": "Feeding",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "dispensed": "Dispensed",
+              "refilled": "Refilled",
+              "skipped_empty": "Skipped (empty)",
+              "skipped_fault": "Skipped (fault)"
+            }
+          }
+        }
+      }
+    }
+  }
+}

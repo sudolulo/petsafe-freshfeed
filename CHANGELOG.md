@@ -1,5 +1,24 @@
 # Changelog
 
+## Integration [0.2.0] - 2026-11-14
+
+### Added
+- Local FreshFeed schedule editor and connection-scoped actual-report cache, with
+  strict wire validation, revision admission and eligible post-watermark reports.
+  Uncorrelated exchange responses cannot acknowledge writes; sequence ordering alone
+  does not establish command causality.
+- Explicitly provisioned durable retained-intent controls using the existing client;
+  fail-closed compatibility/storage gates, restart uncertainty, no replay, and
+  current-session recovery collecting fresh reports for a bounded 35 seconds.
+- HA-observed DP14/DP150 history with persisted local-transition preservation, planned next meal
+  in HA timezone, guarded Feed/Defrost/Refilled controls, and responsive editor.
+- Non-destructive isolated local browser output and synthetic parity acceptance.
+
+### Limits
+- Local software checks do not establish loaded production compatibility or physical
+  success. DP151 remains unsupported; the external-writer push-latency race remains.
+  This is the integration release, not a change to npm/card versions.
+
 ## [0.3.0] - 2026-10-30
 
 ### Added

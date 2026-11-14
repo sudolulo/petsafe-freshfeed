@@ -1,0 +1,53 @@
+save_schedule:
+  name: Save schedule
+  description: Requires an authenticated administrator. Save the complete vector against the last pushed revision. Device echo verifies observation, not physical execution.
+  fields:
+    entry_id:
+      required: true
+      selector:
+        text:
+    entries:
+      required: true
+      selector:
+        object:
+    base_revision:
+      required: true
+      selector:
+        text:
+command:
+  name: Confirm feeder command
+  description: Requires an authenticated administrator. Send one confirmed Feed, Defrost or Refilled operation without replay.
+  fields:
+    entry_id:
+      required: true
+      selector:
+        text:
+    operation:
+      required: true
+      selector:
+        select:
+          options: [feed, defrost, refilled]
+    confirmed:
+      required: true
+      selector:
+        boolean:
+recover:
+  name: Check and clear uncertainty
+  description: Requires an authenticated administrator. Acknowledge that you checked the feeder, then collect fresh reports for up to 35 seconds. Clears local uncertainty without repeating a command or certifying physical execution. Every new coordinator re-arms the durable witness.
+  fields:
+    entry_id:
+      required: true
+      selector:
+        text:
+    operation_id:
+      required: true
+      selector:
+        text:
+    session_id:
+      required: true
+      selector:
+        text:
+    confirmed:
+      required: true
+      selector:
+        boolean:

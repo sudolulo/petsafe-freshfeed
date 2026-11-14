@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "description": "SHA-256 of public loaded source files the FreshFeed bridge depends on. Keys are path suffixes matched against the real module file of the loaded object. Any mismatch or missing file fails closed with tuya_source_incompatible.",
+  "provenance": {
+    "tuya_local_revision": "027351717d3f6b8bef30c47a018944b430f5661e",
+    "tinytuya_version": "1.20.0",
+    "verified": "2026-11-12: research venv files match tinytuya-1.20.0 dist-info RECORD; live Home Assistant container files and live tuya_local device.py hash identically."
+  },
+  "files": {
+    "custom_components/tuya_local/device.py": "2c6092f087eb4d71e9c48abbe34e9c82e0189a604aaf3b7ce8f8493cd3e60aff",
+    "tinytuya/__init__.py": "f86d5d0908ba049b9cf1f0bcd61112dd110f2a97cfd8c94ca7cd21009deffb10",
+    "tinytuya/core/Device.py": "7198545e788da17bce360999ece54e98d09a27d614f431adf62a1fc99c37c211",
+    "tinytuya/core/Monitor.py": "6464d454da0dea0ad872c55162ebf74633550c4b4b25ae7388d2253cd37650f3",
+    "tinytuya/core/XenonDevice.py": "cd3a5f333eed39c55dafd821a01810ac824c74e6cbd330c9b863e43bf4b7963f",
+    "tinytuya/core/__init__.py": "276bbffdee36fb97a4eddd1dbddd20b706211d05035dadc22f2440cf10871181",
+    "tinytuya/core/command_types.py": "446c71f778c4aadcb751356968ffb744c2b47070309b86b5fda66a380dba5fad",
+    "tinytuya/core/const.py": "875eb71a086814625845b1518eae628fa751ad648985eb2b1cf36c38cc828e4e",
+    "tinytuya/core/core.py": "abf8daf68a36b34befa373a81bae20e7d7bcac6655cab20cba3e810c783572bc",
+    "tinytuya/core/crypto_helper.py": "4d5270756da06a55427e44bc838bca5a18ba382d969fa7eb7aecddb446c0903c",
+    "tinytuya/core/error_helper.py": "8b08f583a90b2addddfa5787fd7c44e245e28f7a6eb7bc4ffa9aea5a6b5917ab",
+    "tinytuya/core/exceptions.py": "60064de3b23d487abe109ced534bbc63b7f54f91aeab49cf1244911c78e22419",
+    "tinytuya/core/header.py": "4ebe817e777565eda70918d6ab9b791e41a9e73eda516ba5fea662ccd3310a47",
+    "tinytuya/core/message_helper.py": "158c14953482071f8e60250b36c208b5e381640a5e8629d1d076d91bcf737283",
+    "tinytuya/core/udp_helper.py": "b21942df11e2e0cc0da9fd5143922e01f313744fd741409471f3727f2927af29"
+  },
+  "receive_control_flow_description": "SHA-256 of inspect.getsource text of each TuyaLocalDevice member whose monitor control flow the receive takeover replicates (async_receive) or interleaves with. Unknown text fails closed before takeover.",
+  "receive_control_flow": {
+    "async_receive": "c43ff40b941ea8ab541698f61ac3cd4c0142ab2144e4da3f513000165a14db67",
+    "receive_loop": "08321ffde86ca98b669bf5c17d8d5e408b7b915b6ff4d523746f9a8152bc7371",
+    "actually_start": "90279767e71f3eb2dacb552ce451bdca55a274bae99f88486ab33acf0cdb5efd",
+    "async_stop": "7669124beafa2116af2d2f8599f48867a9c79892ab30009f9af7e09ac48d0247",
+    "_retry_on_failed_connection": "6ec7ff0e9aa0b1a7165df9bf6c4e356467cc2083a174a644b1e8b26ce03284b1",
+    "should_poll": "de544aab1fd208bea5d6ec06f62ba2554a30fabf434a559bdf45c921a8f2df07",
+    "has_returned_state": "e9fa1bfe3bbd373451cd491751d933edde081a294014b5073804c61db83fb231"
+  }
+}

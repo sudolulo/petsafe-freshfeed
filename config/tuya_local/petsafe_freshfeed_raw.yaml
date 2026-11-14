@@ -1,0 +1,148 @@
+name: PetSafe FreshFeed raw observation
+entities:
+  - entity: sensor
+    name: DP 4 raw
+    dps:
+      - id: 4
+        type: string
+        name: sensor
+        readonly: true
+  - entity: sensor
+    name: DP 14 raw
+    dps:
+      - id: 14
+        type: integer
+        name: sensor
+        readonly: true
+  - entity: binary_sensor
+    name: DP 110 raw
+    dps:
+      - id: 110
+        type: boolean
+        name: sensor
+        readonly: true
+  - entity: sensor
+    name: DP 111 raw
+    dps:
+      - id: 111
+        type: integer
+        name: sensor
+        readonly: true
+  - entity: binary_sensor
+    name: DP 125 raw
+    dps:
+      - id: 125
+        type: boolean
+        name: sensor
+        readonly: true
+  - entity: sensor
+    name: DP 130 raw
+    dps:
+      - id: 130
+        type: string
+        name: sensor
+        readonly: true
+  - entity: sensor
+    name: DP 131 raw
+    dps:
+      - id: 131
+        type: string
+        name: sensor
+        readonly: true
+  - entity: sensor
+    name: DP 142 raw
+    dps:
+      - id: 142
+        type: integer
+        name: sensor
+        readonly: true
+  - entity: sensor
+    name: DP 145 raw
+    dps:
+      - id: 145
+        type: integer
+        name: sensor
+        readonly: true
+  - entity: sensor
+    name: DP 150 raw
+    dps:
+      - id: 150
+        type: integer
+        name: sensor
+        readonly: true
+  - entity: button
+    name: Defrost
+    icon: "mdi:snowflake-melt"
+    dps:
+      - id: 142
+        type: integer
+        name: button
+        mapping:
+          - dps_val: 1
+            value: true
+  - entity: button
+    name: Refilled
+    icon: "mdi:tray-arrow-down"
+    dps:
+      - id: 120
+        type: boolean
+        name: button
+  - entity: number
+    name: Brightness
+    category: config
+    icon: "mdi:brightness-6"
+    dps:
+      - id: 111
+        type: integer
+        name: value
+        range:
+          min: 0
+          max: 10
+  - entity: switch
+    name: Stainless inserts
+    category: config
+    icon: "mdi:silverware-variant"
+    dps:
+      - id: 110
+        type: boolean
+        name: switch
+  - entity: switch
+    name: Meal counter
+    category: config
+    icon: "mdi:counter"
+    dps:
+      - id: 125
+        type: boolean
+        name: switch
+  - entity: button
+    name: Feed
+    icon: "mdi:food-drumstick"
+    dps:
+      - id: 140
+        type: string
+        name: button
+        optional: true
+        mapping:
+          - dps_val: "EA=="
+            value: true
+  - entity: sensor
+    name: Quick feed state
+    category: diagnostic
+    dps:
+      - id: 140
+        type: string
+        name: sensor
+        optional: true
+        readonly: true
+  - entity: text
+    name: Meal plan
+    category: config
+    icon: "mdi:calendar-clock"
+    dps:
+      - id: 1
+        type: string
+        optional: true
+        name: value
+        range:
+          min: 0
+          max: 68

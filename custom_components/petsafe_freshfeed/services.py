@@ -1,0 +1,179 @@
+"""Strict local services and pure actual-report operation predicates.
+
+Observed acknowledgements describe device status, never physical success.
+Schedule admission compares the last pushed revision; an external writer's
+approximately one-second push latency remains a race, not a conditional write.
+"""
+from .const import DOMAIN, WRITE_OPERATION_DPS
+from .quick_feed import decode_quick_feed
+from .schedule_codec import MealEntry, ScheduleCodecError, decode_base64, encode_base64
+
+_SAFE_STATUS = frozenset(('standby', 'done', 'last_meal'))
+_DEFROST_STATUS = frozenset(('defrost', 'defrosting'))
+_COMMANDS = {'feed': 'EA==', 'defrost': 1, 'refilled': True}
+
+
+def _counter(value):
+    return type(value) is int and 1 <= value <= 6
+
+
+def unsafe_reason(dps):
+    """Known unsafe evidence only; missing evidence does not bar collection."""
+    if decode_quick_feed(dps.get('140')).status in ('pending', 'feeding'):
+        return 'quick_feed_active'
+    if dps.get('4') in _DEFROST_STATUS or (type(dps.get('142')) is int and dps['142'] > 0):
+        return 'defrost_active'
+    if dps.get('4') == 'feeding':
+        return 'feeding_active'
+    return None
+
+
+def operation_reason(operation, dps):
+    if operation == 'schedule':
+        return None
+    unsafe = unsafe_reason(dps)
+    if unsafe:
+        return unsafe
+    if (dps.get('4') not in _SAFE_STATUS or not _counter(dps.get('145'))
+            or decode_quick_feed(dps.get('140')).status is None
+            or type(dps.get('142')) is not int or dps['142'] != 0):
+        return 'status_unavailable'
+    if operation == 'feed' and dps['145'] == 6:
+        return 'empty_tray'
+    if operation == 'refilled' and dps['145'] == 1:
+        return 'already_refilled'
+    return None
+
+
+def acknowledgement(context, mark, report):
+    if (context.operation_id != mark.operation_id or context.epoch != mark.epoch
+            or report.epoch != mark.epoch or report.sequence <= mark.sequence):
+        return 'ignore'
+    dps = report.dps
+    if context.operation == 'schedule':
+        if '1' in dps and dps['1'] == context.dps.get('1'):
+            try:
+                decode_base64(dps['1'])
+            except (ScheduleCodecError, TypeError):
+                return 'ignore'
+            return 'observed'
+    elif context.operation == 'feed':
+        status = decode_quick_feed(dps.get('140')).status
+        if status == 'failed':
+            return 'observed_failure'
+        if status in ('pending', 'feeding', 'ready'):
+            return 'observed'
+    elif context.operation == 'defrost':
+        if (type(dps.get('142')) is int and dps['142'] > 0) or dps.get('4') in _DEFROST_STATUS:
+            return 'observed'
+    elif context.operation == 'refilled':
+        if type(dps.get('145')) is int and dps['145'] == 1:
+            return 'observed'
+    return 'ignore'
+
+
+def recovery_allowed(context, evidence):
+    if context != evidence.context or not evidence.reports:
+        return False
+    dps = {}
+    sequence = evidence.start_sequence
+    for report in evidence.reports:
+        if report.epoch != context.epoch or report.sequence <= sequence:
+            return False
+        sequence = report.sequence
+        dps.update(report.dps)
+    if sequence != evidence.end_sequence or unsafe_reason(dps):
+        return False
+    if dps.get('4') not in _SAFE_STATUS or not _counter(dps.get('145')):
+        return False
+    if ('140' in dps and decode_quick_feed(dps['140']).status is None
+            or '142' in dps and (type(dps['142']) is not int or dps['142'] != 0)):
+        return False
+    if context.operation == 'schedule':
+        try:
+            decode_base64(dps.get('1'))
+        except (ScheduleCodecError, TypeError):
+            return False
+        return True
+    if context.operation == 'feed':
+        return decode_quick_feed(dps.get('140')).status in ('idle', 'ready', 'failed')
+    if context.operation == 'defrost':
+        return type(dps.get('142')) is int and dps['142'] == 0
+    return context.operation == 'refilled'
+
+
+def _validate(service, data):
+    """Fixed failures, exact JSON types, no coercion or partial vector writes."""
+    from homeassistant.exceptions import ServiceValidationError
+    fields = {'save_schedule': {'entry_id', 'entries', 'base_revision'},
+              'command': {'entry_id', 'operation', 'confirmed'},
+              'recover': {'entry_id', 'operation_id', 'session_id', 'confirmed'}}[service]
+    if set(data) != fields or type(data.get('entry_id')) is not str:
+        raise ServiceValidationError('invalid_request')
+    if service == 'save_schedule':
+        if type(data['base_revision']) is not str or type(data['entries']) is not list or len(data['entries']) > 10:
+            raise ServiceValidationError('invalid_request')
+        try:
+            rows = []
+            for row in data['entries']:
+                if type(row) is not dict or set(row) != {'weekmask','hour','minute','enabled','audible'}:
+                    raise ValueError
+                rows.append(MealEntry(**row))
+            return encode_base64(rows)
+        except (ValueError, TypeError):
+            raise ServiceValidationError('invalid_request') from None
+    if data['confirmed'] is not True:
+        raise ServiceValidationError('confirmation_required')
+    if service == 'command' and (type(data['operation']) is not str or data['operation'] not in _COMMANDS):
+        raise ServiceValidationError('invalid_operation')
+    if service == 'recover' and any(type(data[key]) is not str for key in ('operation_id', 'session_id')):
+        raise ServiceValidationError('invalid_request')
+    return None
+
+
+def async_register(hass, entry):
+    """Register domain services once; route only to installed entry runtimes."""
+    from homeassistant.core import SupportsResponse
+    from homeassistant.exceptions import ServiceValidationError
+    entries = hass.data.setdefault(DOMAIN, {}).setdefault('service_entries', {})
+    entries[entry.entry_id] = entry
+
+    async def handle(call):
+        value = _validate(call.service, call.data)
+        caller_id = call.context.user_id
+        if not caller_id:
+            raise ServiceValidationError('admin_required')
+        caller = await hass.auth.async_get_user(caller_id)
+        if caller is None or not caller.is_admin:
+            raise ServiceValidationError('admin_required')
+        target = entries.get(call.data['entry_id'])
+        if target is None:
+            raise ServiceValidationError('unknown_entry')
+        adapter = getattr(target.runtime_data, 'adapter', None)
+        if adapter is None:
+            raise ServiceValidationError('source_unavailable')
+        if call.service == 'save_schedule':
+            result = await adapter.async_submit('schedule', {'1': value}, base_revision=call.data['base_revision'])
+        elif call.service == 'command':
+            operation = call.data['operation']
+            result = await adapter.async_submit(operation, {WRITE_OPERATION_DPS[operation]: _COMMANDS[operation]}, confirmed=True)
+        else:
+            resolved = await adapter.async_recover(call.data['operation_id'], call.data['session_id'], confirmed=True)
+            if not resolved:
+                raise ServiceValidationError('recovery_rejected')
+            return {'resolved': True}
+        if not result['admitted']:
+            raise ServiceValidationError(result['reason'])
+        return result
+
+    for service in ('save_schedule', 'command', 'recover'):
+        if not hass.services.has_service(DOMAIN, service):
+            hass.services.async_register(DOMAIN, service, handle, supports_response=SupportsResponse.OPTIONAL)
+
+
+def async_unregister(hass, entry_id):
+    entries = hass.data.get(DOMAIN, {}).get('service_entries', {})
+    entries.pop(entry_id, None)
+    if not entries:
+        for service in ('save_schedule', 'command', 'recover'):
+            hass.services.async_remove(DOMAIN, service)

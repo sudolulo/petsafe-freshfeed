@@ -1,0 +1,12 @@
+{
+  "domain": "petsafe_freshfeed",
+  "name": "PetSafe FreshFeed",
+  "after_dependencies": ["tuya_local"],
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://git.arch.fyi/flan/pet-feeder-card",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "requirements": [],
+  "version": "0.2.0"
+}
