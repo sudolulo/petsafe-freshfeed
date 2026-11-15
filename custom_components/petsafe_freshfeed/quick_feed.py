@@ -21,7 +21,8 @@ def decode_quick_feed(value: str | None) -> QuickFeed:
         data = base64.b64decode(value, validate=True)
     except (ValueError, binascii.Error):
         return unknown
-    if len(data) != 3 or base64.b64encode(data).decode('ascii') != value:
+    if (len(data) != 3 and not (len(data) == 4 and data[3] == 0)
+            or base64.b64encode(data).decode('ascii') != value):
         return unknown
     command = {0: 'none', 16: 'start', 32: 'cancel', 48: 'now'}.get(data[0])
     status = {0: 'idle', 1: 'pending', 2: 'feeding', 3: 'ready', 4: 'failed'}.get(data[1])

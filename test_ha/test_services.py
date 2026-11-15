@@ -17,7 +17,10 @@ def report(dps, sequence=2, epoch=1):
 @pytest.mark.parametrize('operation,dps,decision', [
     ('schedule', {'1': '/w=='}, 'observed'),
     ('schedule', {'1': 'fwgAAQE='}, 'ignore'),
-    ('feed', {'140': 'EAEAAA=='}, 'ignore'),
+    ('feed', {'140': 'EAEAAA=='}, 'observed'),
+    ('feed', {'140': 'EAIAAA=='}, 'observed'),
+    ('feed', {'140': 'EAMAAA=='}, 'observed'),
+    ('feed', {'140': 'EAEAAQ=='}, 'ignore'),
     ('feed', {'140': 'EAEA'}, 'observed'),
     ('feed', {'140': 'EAIA'}, 'observed'),
     ('feed', {'140': 'EAMA'}, 'observed'),
@@ -39,7 +42,8 @@ def test_acknowledgement(operation, dps, decision):
 
 
 @pytest.mark.parametrize('operation,extra', [('schedule', {'1': '/w=='}),
-    ('feed', {'140': 'EAAA'}), ('defrost', {'142': 0}), ('refilled', {})])
+    ('feed', {'140': 'EAAA'}), ('feed', {'140': 'EAAAAA=='}),
+    ('feed', {'140': 'EAMAAA=='}), ('defrost', {'142': 0}), ('refilled', {})])
 def test_recovery_combines_only_fresh_safe_evidence(operation, extra):
     from custom_components.petsafe_freshfeed.services import recovery_allowed
     ctx = IntentContext(operation, 'op', 'session', 1, {})
@@ -51,6 +55,8 @@ def test_recovery_combines_only_fresh_safe_evidence(operation, extra):
     assert not recovery_allowed(ctx, RecoveryEvidence(ctx, 1, 4, rows + (report({'140': 'EAIA'}, 4),)))
     assert not recovery_allowed(ctx, RecoveryEvidence(ctx, 1, 4, rows + (report({'142': 1}, 4),)))
     assert not recovery_allowed(ctx, RecoveryEvidence(ctx, 1, 2, rows[:1]))
+    assert not recovery_allowed(ctx, RecoveryEvidence(ctx, 1, 3, (rows[0], report({'145': 2, **extra}, 3, epoch=2))))
+    assert not recovery_allowed(ctx, RecoveryEvidence(ctx, 1, 4, rows + (report({'140': 'EAIAAA=='}, 4),)))
     for invalid in ({'140': 'EA=='}, {'142': -1}, {'4': 'enum_4'}):
         assert not recovery_allowed(ctx, RecoveryEvidence(ctx, 1, 4, rows + (report(invalid, 4),)))
 
@@ -59,6 +65,8 @@ def test_recovery_combines_only_fresh_safe_evidence(operation, extra):
     ('feed', {}, 'status_unavailable'),
     ('feed', {'4': 'standby','145': 2,'140': 'EAEA','142': 0}, 'quick_feed_active'),
     ('feed', {'4': 'standby','145': 2,'140': 'EAIA','142': 0}, 'quick_feed_active'),
+    ('feed', {'4': 'standby','145': 2,'140': 'EAEFAA==','142': 0}, 'quick_feed_active'),
+    ('feed', {'4': 'standby','145': 2,'140': 'EAIAAA==','142': 0}, 'quick_feed_active'),
     ('feed', {'4': 'standby','145': 6,'140': 'EAAA','142': 0}, 'empty_tray'),
     ('defrost', {'4': 'standby','145': 2,'140': 'EAAA','142': 1}, 'defrost_active'),
     ('defrost', {'4': 'defrost','145': 2,'140': 'EAAA','142': 0}, 'defrost_active'),

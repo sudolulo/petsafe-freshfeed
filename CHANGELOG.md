@@ -14,6 +14,10 @@
   in HA timezone, guarded Feed/Defrost/Refilled controls, and responsive editor.
 - Non-destructive isolated local browser output and synthetic parity acceptance.
 
+### Fixed
+- Decode the observed four-byte quick-feed reports with a zero trailing byte as
+  well as the original three-byte form; unsupported report formats remain unknown.
+
 ### Limits
 - Local software checks do not establish loaded production compatibility or physical
   success. DP151 remains unsupported; the external-writer push-latency race remains.
