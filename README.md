@@ -112,9 +112,13 @@ schedule read, or cross-app exactly-once guarantee.
 
 Feed, Defrost and Refilled require confirmation. Feed is blocked for pending/feeding
 DP140, exhausted counter, missing live status, unavailable source, pending or uncertain
-intent and transport/storage/integrity faults. Defrost also rejects quick-feed pending
-and active defrost. Missing flags default to denied in the browser. Cancel and Feed-now
-are not exposed. Every new coordinator re-arms uncertainty after any prepared intent,
+intent and transport/storage/integrity faults. From reported idle or failed, Feed sends
+the delayed Start command; from reported ready, it sends Feed Now. The adapter refuses
+to send if the reported state no longer matches its selected command at dispatch.
+A single guarded live ready-state test produced now/feeding reports and a counter
+advance. Reports are observations, not proof of command causality or physical feeding.
+Defrost also rejects quick-feed pending and active defrost. Missing flags default to
+denied in the browser. Raw Cancel and Feed Now commands are not exposed. Every new coordinator re-arms uncertainty after any prepared intent,
 even one previously verified or recovered. Nothing is replayed or erased.
 
 Recovery acknowledges the current operation/session **before** collecting new reports

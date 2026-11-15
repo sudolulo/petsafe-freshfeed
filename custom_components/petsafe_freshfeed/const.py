@@ -20,9 +20,10 @@ PLATFORMS = ("sensor", "binary_sensor", "event")
 EVENT_KINDS = ("dispensed", "refilled", "skipped_empty", "skipped_fault", "meal_report", "all_meals_report", "interrupted")
 
 # Critical write operations and the exact single DP each may write. Feed is the
-# quick-feed START command (0x10) only; cancel/now are never admitted.
+# quick-feed START intent token; the adapter selects the actual feed command.
 WRITE_OPERATION_DPS = {"schedule": "1", "feed": "140", "defrost": "142", "refilled": "120"}
 FEED_START_COMMAND = "EA=="
+FEED_NOW_COMMAND = "MA=="
 DEFROST_START_VALUE = 1
 REFILLED_VALUE = True
 WRITE_SEND_TIMEOUT = 5.0

@@ -491,6 +491,92 @@ async def test_confirmed_operations_route_to_the_owned_transport(adapters, store
     assert len(writes) == 1
 
 
+@pytest.mark.parametrize('status,expected', [
+    ('EAAA', 'EA=='), ('EAQA', 'EA=='), ('EAMA', 'MA=='),
+])
+async def test_feed_selects_reported_state_payload(adapters, store, writes, status, expected):
+    ctx = adapters
+    adapter = await _adapter(ctx, await _provision(store))
+    sent = []
+    original = adapter.transport.async_send
+
+    async def capture(operation, dps, **kwargs):
+        sent.append((operation, dict(dps)))
+        return await original(operation, dps, **kwargs)
+
+    adapter.transport.async_send = capture
+    _queue_reports(ctx, {'4': 'standby', '145': 2, '140': status, '142': 0})
+    result = await adapter.async_submit('feed', {'140': 'EA=='}, confirmed=True)
+    assert result['admitted'] is True
+    assert sent == [('feed', {'140': expected})]
+    assert len(writes) == 1
+    assert adapter.recovery_context().dps == {'140': expected}
+
+
+@pytest.mark.parametrize('initial,later', [('EAMA', 'EAAA'), ('EAAA', 'EAMA')])
+async def test_feed_state_change_during_witness_refuses_send(adapters, store, writes, initial, later):
+    ctx = adapters
+    witness = GatedWitness(await _provision(store))
+    adapter = await _adapter(ctx, witness)
+    witness.gate = asyncio.Event()
+    _queue_reports(ctx, {'4': 'standby', '145': 2, '140': initial, '142': 0})
+    task = ctx.hass.async_create_task(adapter.async_submit('feed', {'140': 'EA=='}, confirmed=True))
+    await witness.entered.wait()
+    _queue_reports(ctx, {'140': later})
+    witness.gate.set()
+    await task
+    assert writes == []
+
+
+@pytest.mark.parametrize('initial,later,expected', [('EAMA', 'EAAA', 'EA=='), ('EAAA', 'EAMA', 'MA==')])
+async def test_feed_state_change_during_provenance_selects_final_state(
+        adapters, store, writes, monkeypatch, initial, later, expected):
+    ctx = adapters
+    adapter = await _adapter(ctx, await _provision(store))
+    gate, entered = asyncio.Event(), asyncio.Event()
+    original_executor = ctx.hass.async_add_executor_job
+    original_send = adapter.transport.async_send
+    sent = []
+
+    def gated_executor(func, *args):
+        if func != ctx.bridge._code_ok:
+            return original_executor(func, *args)
+
+        async def run():
+            entered.set()
+            await gate.wait()
+            return await original_executor(func, *args)
+        return asyncio.create_task(run())
+
+    async def capture(operation, dps, **kwargs):
+        sent.append(dict(dps))
+        return await original_send(operation, dps, **kwargs)
+
+    monkeypatch.setattr(ctx.hass, 'async_add_executor_job', gated_executor)
+    adapter.transport.async_send = capture
+    _queue_reports(ctx, {'4': 'standby', '145': 2, '140': initial, '142': 0})
+    task = ctx.hass.async_create_task(adapter.async_submit('feed', {'140': 'EA=='}, confirmed=True))
+    await entered.wait()
+    _queue_reports(ctx, {'140': later})
+    gate.set()
+    assert (await task)['admitted'] is True
+    assert sent == [{'140': expected}] and len(writes) == 1
+
+
+@pytest.mark.parametrize('status,counter,reason', [
+    ('EAEA', 2, 'quick_feed_active'), ('EAIA', 2, 'quick_feed_active'),
+    ('invalid', 2, 'status_unavailable'), ('EAMA', 6, 'empty_tray'),
+])
+async def test_feed_unsafe_states_never_send(adapters, store, writes, status, counter, reason):
+    ctx = adapters
+    witness = GatedWitness(await _provision(store))
+    adapter = await _adapter(ctx, witness)
+    _queue_reports(ctx, {'4': 'standby', '145': counter, '140': status, '142': 0})
+    result = await adapter.async_submit('feed', {'140': 'EA=='}, confirmed=True)
+    assert result['admitted'] is False and result['reason'] == reason
+    assert not witness.prepares and not writes
+
+
 # ----- recovery admission and phases -------------------------------------------
 
 

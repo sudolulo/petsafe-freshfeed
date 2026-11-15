@@ -15,6 +15,10 @@
 - Non-destructive isolated local browser output and synthetic parity acceptance.
 
 ### Fixed
+- Confirmed Feed selects delayed Start from reported idle/failed and Feed Now from
+  reported ready; a changed state at dispatch refuses the selected command. One
+  guarded live ready-state test produced now/feeding reports and a counter advance.
+  Device reports remain observations, not proof of causality or physical feeding.
 - Decode the observed four-byte quick-feed reports with a zero trailing byte as
   well as the original three-byte form; unsupported report formats remain unknown.
 

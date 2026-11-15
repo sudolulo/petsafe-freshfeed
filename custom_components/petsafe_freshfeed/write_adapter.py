@@ -46,10 +46,11 @@ from time import monotonic
 from typing import Callable, Literal
 
 from .const import (
-    DEFROST_START_VALUE, FEED_START_COMMAND, RECOVERY_TIMEOUT, REFILLED_VALUE,
+    DEFROST_START_VALUE, FEED_NOW_COMMAND, FEED_START_COMMAND, RECOVERY_TIMEOUT, REFILLED_VALUE,
     WRITE_OPERATION_DPS, WRITE_SEND_TIMEOUT,
 )
 from .critical_transport import _socket_open
+from .quick_feed import decode_quick_feed
 from .schedule_codec import ScheduleCodecError, decode_base64
 from .services import operation_reason, unsafe_reason
 from .tuya_bridge import DeviceReport, DispatchMark, _settle
@@ -393,8 +394,11 @@ class WriteAdapter:
                   or operation_reason(operation, self._live_dps))
         if reason is not None:
             return self._response(False, reason)
+        selected_dps = dict(dps)
+        if operation == 'feed':
+            selected_dps['140'] = self._feed_command()
         context = IntentContext(operation, "", self.transport.recovery_session_id,
-                                self.bridge.epoch, dict(dps))
+                                self.bridge.epoch, selected_dps)
         self._admitted_revision = base_revision
         self._submitting, self._caller = context, asyncio.current_task()
         self._marks, self._decisions = {}, {}
@@ -423,6 +427,14 @@ class WriteAdapter:
         if cancelled:
             raise asyncio.CancelledError()
         return result
+
+    def _feed_command(self):
+        status = decode_quick_feed(self._live_dps.get('140')).status
+        if status == 'ready':
+            return FEED_NOW_COMMAND
+        if status in ('idle', 'failed'):
+            return FEED_START_COMMAND
+        return None
 
     async def _run_submit(self, context):
         transport = self.transport
@@ -518,6 +530,7 @@ class WriteAdapter:
             raise ValueError("write_adapter_refused")
         if (mark.epoch != context.epoch or not self._compatible_now()
                 or operation_reason(context.operation, self._live_dps)
+                or (context.operation == 'feed' and context.dps.get('140') != self._feed_command())
                 or (context.operation == 'schedule' and self._revision_reason(
                     'schedule', self._admitted_revision))):
             raise ValueError('write_adapter_refused')
