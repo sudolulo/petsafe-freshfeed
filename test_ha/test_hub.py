@@ -156,8 +156,9 @@ async def test_store_migration_and_schedule_restart(hass, source_entry, raw_enti
 
 
 async def test_legacy_history_migration_preserves_multiple_events_with_missing_cache(
-    hass, source_entry, raw_entities, hass_storage
+    hass, source_entry, raw_entities, hass_storage, freezer
 ):
+    freezer.move_to("2026-11-10T12:00:00+00:00")
     hub = make_hub(hass, source_entry)
     key = f"petsafe_freshfeed.{hub.entry.entry_id}"
     events = [

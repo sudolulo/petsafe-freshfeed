@@ -1,5 +1,18 @@
 # Changelog
 
+## Distribution preparation - 2026-11-15
+
+### Added
+- Original MIT-licensed feeder branding and deterministic, allowlisted integration
+  and card exports for separate public HACS custom repositories. Existing component
+  versions remain 0.2.0 and 0.3.0 for their first public distribution.
+- Public installation documentation, compatible Tuya source profile example, and
+  HACS/hassfest validation workflows. Packaging does not broaden runtime compatibility.
+
+### Fixed
+- Freeze the legacy history migration test clock so fixed fixture dates do not age
+  outside the unchanged seven-day retention window.
+
 ## Integration [0.2.0] - 2026-11-14
 
 ### Added
