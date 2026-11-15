@@ -21,7 +21,8 @@ EVENT_KINDS = ("dispensed", "refilled", "skipped_empty", "skipped_fault", "meal_
 
 # Critical write operations and the exact single DP each may write. Feed is the
 # quick-feed START intent token; the adapter selects the actual feed command.
-WRITE_OPERATION_DPS = {"schedule": "1", "feed": "140", "defrost": "142", "refilled": "120"}
+WRITE_OPERATION_DPS = {"schedule": "1", "feed": "140", "cancel": "140", "defrost": "142", "refilled": "120"}
+FEED_CANCEL_COMMAND = "IA=="
 FEED_START_COMMAND = "EA=="
 FEED_NOW_COMMAND = "MA=="
 DEFROST_START_VALUE = 1

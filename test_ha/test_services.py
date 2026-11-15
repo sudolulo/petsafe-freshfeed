@@ -26,6 +26,10 @@ def report(dps, sequence=2, epoch=1):
     ('feed', {'140': 'EAMA'}, 'observed'),
     ('feed', {'140': 'EAQA'}, 'observed_failure'),
     ('feed', {'140': 'EAAA'}, 'ignore'),
+    ('cancel', {'140': 'IAAA'}, 'observed'),
+    ('cancel', {'140': 'IAEA'}, 'ignore'),
+    ('cancel', {'140': 'EAAA'}, 'ignore'),
+    ('cancel', {'140': 'IAQA'}, 'observed_failure'),
     ('defrost', {'142': 1}, 'observed'),
     ('defrost', {'142': True}, 'ignore'),
     ('refilled', {'145': 1}, 'observed'),
@@ -43,7 +47,8 @@ def test_acknowledgement(operation, dps, decision):
 
 @pytest.mark.parametrize('operation,extra', [('schedule', {'1': '/w=='}),
     ('feed', {'140': 'EAAA'}), ('feed', {'140': 'EAAAAA=='}),
-    ('feed', {'140': 'EAMAAA=='}), ('defrost', {'142': 0}), ('refilled', {})])
+    ('feed', {'140': 'EAMAAA=='}), ('defrost', {'142': 0}), ('refilled', {}),
+    ('cancel', {'140': 'IAAA', '142': 0})])
 def test_recovery_combines_only_fresh_safe_evidence(operation, extra):
     from custom_components.petsafe_freshfeed.services import recovery_allowed
     ctx = IntentContext(operation, 'op', 'session', 1, {})
@@ -62,6 +67,12 @@ def test_recovery_combines_only_fresh_safe_evidence(operation, extra):
 
 
 @pytest.mark.parametrize('operation,dps,reason', [
+    ('cancel', {'4': 'standby','145': 1,'140': 'EAEA','142': 0}, None),
+    ('cancel', {'4': 'standby','145': 6,'140': 'EAEA','142': 0}, None),
+    ('cancel', {'4': 'standby','145': 1,'140': 'EAAA','142': 0}, 'cancel_not_pending'),
+    ('cancel', {'4': 'standby','145': 1,'140': 'EAIA','142': 0}, 'quick_feed_active'),
+    ('cancel', {'4': 'standby','145': 1,'140': 'EAEA'}, 'status_unavailable'),
+    ('cancel', {'4': 'standby','145': 1,'140': 'EAEA','142': 1}, 'defrost_active'),
     ('feed', {}, 'status_unavailable'),
     ('feed', {'4': 'standby','145': 2,'140': 'EAEA','142': 0}, 'quick_feed_active'),
     ('feed', {'4': 'standby','145': 2,'140': 'EAIA','142': 0}, 'quick_feed_active'),
@@ -78,8 +89,21 @@ def test_interlock(operation, dps, reason):
     assert operation_reason(operation, dps) == reason
 
 
+@pytest.mark.parametrize('changes', [
+    {'140': 'EAEA'}, {'140': 'EAIA'}, {'140': 'EAMA'}, {'140': 'EAQA'},
+    {'140': 'bad'}, {'140': None}, {'142': None}, {'142': True},
+    {'145': 0}, {'145': True}, {'4': 'feeding'},
+])
+def test_cancel_recovery_requires_fresh_idle_and_all_safe_prerequisites(changes):
+    from custom_components.petsafe_freshfeed.services import recovery_allowed
+    ctx = IntentContext('cancel', 'op', 'session', 1, {})
+    dps = {'4': 'standby', '145': 1, '140': 'IAAA', '142': 0} | changes
+    assert not recovery_allowed(ctx, RecoveryEvidence(ctx, 1, 2, (report(dps),)))
+
+
 @pytest.mark.parametrize('service,data', [
     ('command', {'entry_id': 'a', 'operation': 'feed', 'confirmed': True}),
+    ('command', {'entry_id': 'a', 'operation': 'cancel', 'confirmed': True}),
     ('save_schedule', {'entry_id': 'a', 'entries': [], 'base_revision': 'revision'}),
     ('recover', {'entry_id': 'a', 'operation_id': 'op', 'session_id': 'session', 'confirmed': True}),
 ])
@@ -99,7 +123,8 @@ async def test_write_services_reject_non_admin_callers(hass, service, data, call
     adapter.async_recover.assert_not_awaited()
 
 
-async def test_services_strict_payload_routing_and_entry_lifetime(hass):
+@pytest.mark.parametrize('operation', ['feed', 'cancel'])
+async def test_services_strict_payload_routing_and_entry_lifetime(hass, operation):
     from custom_components.petsafe_freshfeed.services import async_register, async_unregister
     adapters = [SimpleNamespace(async_submit=AsyncMock(return_value={'admitted': True}),
                                 async_recover=AsyncMock(return_value=True)) for _ in range(2)]
@@ -109,11 +134,16 @@ async def test_services_strict_payload_routing_and_entry_lifetime(hass):
     from homeassistant.core import Context
     hass.auth.async_get_user = AsyncMock(return_value=SimpleNamespace(is_admin=True))
     admin_context = Context(user_id='admin')
-    payload = {'entry_id': 'a', 'operation': 'feed', 'confirmed': True}
+    payload = {'entry_id': 'a', 'operation': operation, 'confirmed': True}
     await hass.services.async_call(domain, 'command', payload, blocking=True, context=admin_context)
-    adapters[0].async_submit.assert_awaited_once_with('feed', {'140': 'EA=='}, confirmed=True)
+    adapters[0].async_submit.assert_awaited_once_with(
+        operation, {'140': 'IA==' if operation == 'cancel' else 'EA=='}, confirmed=True)
     assert adapters[1].async_submit.await_count == 0
-    for change in ({'confirmed': 1}, {'confirmed': 'true'}, {'extra': 1}, {'operation': 'cancel'}, {'entry_id': 'missing'}):
+    await hass.services.async_call(domain, 'command', payload | {'operation': 'cancel'}, blocking=True, context=admin_context)
+    adapters[0].async_submit.assert_awaited_with('cancel', {'140': 'IA=='}, confirmed=True)
+    for change in ({'confirmed': False}, {'confirmed': None}, {'confirmed': 1},
+                   {'confirmed': 'true'}, {'extra': 1}, {'dps': {'140': 'IA=='}},
+                   {'operation': 'raw'}, {'operation': True}, {'entry_id': 'missing'}):
         with pytest.raises((ServiceValidationError, __import__('voluptuous').Invalid)):
             await hass.services.async_call(domain, 'command', payload | change, blocking=True, context=admin_context)
     await hass.services.async_call(domain, 'save_schedule', {'entry_id': 'b', 'entries': [], 'base_revision': 'digest'}, blocking=True, context=admin_context)

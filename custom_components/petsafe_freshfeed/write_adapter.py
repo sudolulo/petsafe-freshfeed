@@ -46,10 +46,10 @@ from time import monotonic
 from typing import Callable, Literal
 
 from .const import (
-    DEFROST_START_VALUE, FEED_NOW_COMMAND, FEED_START_COMMAND, RECOVERY_TIMEOUT, REFILLED_VALUE,
+    DEFROST_START_VALUE, FEED_CANCEL_COMMAND, FEED_NOW_COMMAND, FEED_START_COMMAND, RECOVERY_TIMEOUT, REFILLED_VALUE,
     WRITE_OPERATION_DPS, WRITE_SEND_TIMEOUT,
 )
-from .critical_transport import _socket_open
+from .critical_transport import SendReceipt, _socket_open
 from .quick_feed import decode_quick_feed
 from .schedule_codec import ScheduleCodecError, decode_base64
 from .services import operation_reason, unsafe_reason
@@ -60,7 +60,7 @@ _LOGGER = logging.getLogger(__name__)
 AckDecision = Literal["ignore", "observed", "observed_failure"]
 _OBSERVED = frozenset(("observed", "observed_failure"))
 _MAX_EVIDENCE = 256
-_FIXED_VALUES = {"feed": FEED_START_COMMAND, "defrost": DEFROST_START_VALUE,
+_FIXED_VALUES = {"feed": FEED_START_COMMAND, "cancel": FEED_CANCEL_COMMAND, "defrost": DEFROST_START_VALUE,
                  "refilled": REFILLED_VALUE}
 
 
@@ -273,7 +273,10 @@ class WriteAdapter:
         common = self._gate_reason()
         reasons = {op: common or operation_reason(op, self._live_dps)
                    for op in ('feed', 'defrost', 'refilled')}
+        cancel_reason = common or operation_reason('cancel', self._live_dps)
         return {
+            "can_cancel": cancel_reason is None,
+            "cancel_reason": cancel_reason,
             "can_feed": reasons['feed'] is None,
             "can_defrost": reasons['defrost'] is None,
             "can_refilled": reasons['refilled'] is None,
@@ -283,6 +286,14 @@ class WriteAdapter:
             "operation": operation,
             "session_id": transport.recovery_session_id,
             "reason": reason,
+            # Reconciliation clears pending identity on failure. Preserve only
+            # the terminal observation's identity, never a new success state.
+            "observed_failure": ({
+                "operation_id": self._current.operation_id,
+                "operation": self._current.operation,
+                "session_id": self._current.session_id,
+            } if state == "idle" and self._result == "observed_failure"
+                and self._current is not None else None),
             "storage_fault": storage,
             "integrity_fault": integrity,
             "recovery_can_start": can_start,
@@ -466,8 +477,18 @@ class WriteAdapter:
         self._submitting = self._caller = None
         operation_id = context.operation_id or (receipt.operation_id if receipt else "")
         storage, integrity = self._faults()
+        # Only positive proof of a pre-dispatch rejection may tell the service
+        # (and card) it is safe to release the submission latch. No receipt,
+        # attempted/unknown outcomes, faults or dispatch evidence stay admitted.
+        rejected = (context.operation == 'cancel'
+                    and type(receipt) is SendReceipt and receipt.outcome == "not_sent"
+                    and receipt.attempted is False and receipt.client_returned is False
+                    and not transport.needs_reconciliation
+                    and transport.pending_operation_id is None
+                    and not storage and not integrity
+                    and not context.operation_id and not self._marks)
         if not transport.needs_reconciliation:
-            # Confirmed pre-dispatch rejection: the transport released itself.
+            # The transport released itself; this alone does not prove rejection.
             self._current = None
             self._reason = receipt.reason if receipt is not None else "send_cancelled"
         elif storage or integrity:
@@ -481,7 +502,7 @@ class WriteAdapter:
         else:
             self._reason = receipt.reason if receipt is not None else "send_cancelled"
         self._notify()
-        return self._response(True)
+        return self._response(not rejected)
 
     async def _release(self, operation_id):
         """Local release of THIS construction on an observed acknowledgement."""
@@ -509,7 +530,7 @@ class WriteAdapter:
             operation_id, verifier, confirmed=True, session_id=transport.recovery_session_id)
         if released:
             decision = self._decisions[operation_id]
-            self._result = "verified" if decision == "observed" else None
+            self._result = "verified" if decision == "observed" else "observed_failure"
             self._reason = None if decision == "observed" else "observed_failure"
             self._phase = "idle"
             if self._collector is not None:

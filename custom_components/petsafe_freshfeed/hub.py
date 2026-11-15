@@ -591,10 +591,12 @@ class FreshFeedHub:
         if self.adapter is not None:
             return self.adapter.view
         return {"state": "blocked", "operation_id": None, "operation": None, "session_id": "",
-                "reason": self._controls_reason or "controls_unavailable", "storage_fault": False,
+                "reason": self._controls_reason or "controls_unavailable", "observed_failure": None, "storage_fault": False,
                 "integrity_fault": False, "recovery_can_start": False,
                 "recovery_phase": "idle", "can_feed": False, "can_defrost": False,
-                "can_refilled": False, "blocked_reason": self._controls_reason or "controls_unavailable"}
+                "can_refilled": False, "can_cancel": False,
+                "cancel_reason": self._controls_reason or "controls_unavailable",
+                "blocked_reason": self._controls_reason or "controls_unavailable"}
 
     @property
     def last_event(self):

@@ -55,7 +55,7 @@ from weakref import WeakKeyDictionary
 
 # Public TinyTuya command_types.CONTROL. Importing TinyTuya is not required.
 CONTROL = 7
-_OPERATIONS = frozenset({"feed", "defrost", "refilled", "settings", "schedule"})
+_OPERATIONS = frozenset({"feed", "cancel", "defrost", "refilled", "settings", "schedule"})
 _DPS = frozenset({"1", "3", "110", "111", "120", "125", "140", "142"})
 # Owning-loop-only fencing for coordinators borrowing the same API lock.
 # Weak keys and opaque tokens retain neither engines nor locks; no process fence.

@@ -294,7 +294,7 @@ def _copy_record(record):
             or set(record) != {"operation_id", "operation", "state"}
             or not _valid_id(record["operation_id"])
             or type(record["operation"]) is not str
-            or record["operation"] not in {"feed", "defrost", "refilled", "settings", "schedule"}
+            or record["operation"] not in {"feed", "cancel", "defrost", "refilled", "settings", "schedule"}
             or type(record["state"]) is not str or record["state"] not in {"pending", "unknown"}):
         raise ValueError("invalid_witness_record")
     return dict(record)

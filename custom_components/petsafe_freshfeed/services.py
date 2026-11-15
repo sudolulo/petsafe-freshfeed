@@ -4,13 +4,13 @@ Observed acknowledgements describe device status, never physical success.
 Schedule admission compares the last pushed revision; an external writer's
 approximately one-second push latency remains a race, not a conditional write.
 """
-from .const import DOMAIN, WRITE_OPERATION_DPS
+from .const import DOMAIN, FEED_CANCEL_COMMAND, WRITE_OPERATION_DPS
 from .quick_feed import decode_quick_feed
 from .schedule_codec import MealEntry, ScheduleCodecError, decode_base64, encode_base64
 
 _SAFE_STATUS = frozenset(('standby', 'done', 'last_meal'))
 _DEFROST_STATUS = frozenset(('defrost', 'defrosting'))
-_COMMANDS = {'feed': 'EA==', 'defrost': 1, 'refilled': True}
+_COMMANDS = {'feed': 'EA==', 'cancel': FEED_CANCEL_COMMAND, 'defrost': 1, 'refilled': True}
 
 
 def _counter(value):
@@ -31,6 +31,18 @@ def unsafe_reason(dps):
 def operation_reason(operation, dps):
     if operation == 'schedule':
         return None
+    if operation == 'cancel':
+        status = decode_quick_feed(dps.get('140')).status
+        if status == 'feeding':
+            return 'quick_feed_active'
+        if dps.get('4') in _DEFROST_STATUS or (type(dps.get('142')) is int and dps['142'] > 0):
+            return 'defrost_active'
+        if dps.get('4') == 'feeding':
+            return 'feeding_active'
+        if (dps.get('4') not in _SAFE_STATUS or not _counter(dps.get('145'))
+                or status is None or type(dps.get('142')) is not int or dps['142'] != 0):
+            return 'status_unavailable'
+        return None if status == 'pending' else 'cancel_not_pending'
     unsafe = unsafe_reason(dps)
     if unsafe:
         return unsafe
@@ -62,6 +74,12 @@ def acknowledgement(context, mark, report):
         if status == 'failed':
             return 'observed_failure'
         if status in ('pending', 'feeding', 'ready'):
+            return 'observed'
+    elif context.operation == 'cancel':
+        quick = decode_quick_feed(dps.get('140'))
+        if quick.status == 'failed':
+            return 'observed_failure'
+        if quick.command == 'cancel' and quick.status == 'idle':
             return 'observed'
     elif context.operation == 'defrost':
         if (type(dps.get('142')) is int and dps['142'] > 0) or dps.get('4') in _DEFROST_STATUS:
@@ -97,6 +115,9 @@ def recovery_allowed(context, evidence):
         return True
     if context.operation == 'feed':
         return decode_quick_feed(dps.get('140')).status in ('idle', 'ready', 'failed')
+    if context.operation == 'cancel':
+        return (type(dps.get('142')) is int and dps['142'] == 0
+                and decode_quick_feed(dps.get('140')).status == 'idle')
     if context.operation == 'defrost':
         return type(dps.get('142')) is int and dps['142'] == 0
     return context.operation == 'refilled'

@@ -298,6 +298,9 @@ class IoApi(Api):
     decode_error = False
 
     def generate_payload(self, *args, **kwargs):
+        if not hasattr(self, 'payload_calls'):
+            self.payload_calls = []
+        self.payload_calls.append((args, kwargs))
         _fake_log.debug('payload')
         if self.before_send is not None:
             self.before_send()

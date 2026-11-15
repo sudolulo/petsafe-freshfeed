@@ -16,7 +16,7 @@ save_schedule:
         text:
 command:
   name: Confirm feeder command
-  description: Requires an authenticated administrator. Send one confirmed Feed, Defrost or Refilled operation without replay.
+  description: Requires an authenticated administrator. Send one confirmed Feed, Cancel, Defrost or Refilled operation without replay.
   fields:
     entry_id:
       required: true
@@ -26,7 +26,7 @@ command:
       required: true
       selector:
         select:
-          options: [feed, defrost, refilled]
+          options: [feed, cancel, defrost, refilled]
     confirmed:
       required: true
       selector:

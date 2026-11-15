@@ -3,6 +3,10 @@
 ## Integration [0.2.0] - 2026-11-14
 
 ### Added
+- Reported quick-feed minutes without a local countdown and confirmed pending-only
+  Cancel through the durable adapter. One guarded live Start/Cancel test produced
+  cancel/idle reports with an unchanged counter beyond the original countdown.
+  Reports are observations, not proof of physical success; uncertain writes are not replayed.
 - Local FreshFeed schedule editor and connection-scoped actual-report cache, with
   strict wire validation, revision admission and eligible post-watermark reports.
   Uncorrelated exchange responses cannot acknowledge writes; sequence ordering alone

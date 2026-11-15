@@ -110,7 +110,7 @@ external-writer push-latency race (approximately 1 second in the observed experi
 not a maximum delay guarantee): there is no device CAS, demonstrated on-demand
 schedule read, or cross-app exactly-once guarantee.
 
-Feed, Defrost and Refilled require confirmation. Feed is blocked for pending/feeding
+Feed, Cancel, Defrost and Refilled require confirmation. Feed is blocked for pending/feeding
 DP140, exhausted counter, missing live status, unavailable source, pending or uncertain
 intent and transport/storage/integrity faults. From reported idle or failed, Feed sends
 the delayed Start command; from reported ready, it sends Feed Now. The adapter refuses
@@ -149,7 +149,7 @@ data:
 ```yaml
 service: petsafe_freshfeed.command
 data: {entry_id: synthetic_entry, operation: feed, confirmed: true}
-# operation is feed, defrost, or refilled
+# operation is feed, defrost, refilled, or cancel
 ```
 
 ```yaml
@@ -196,3 +196,7 @@ The raw-data header shows the text labels “PetSafe” and “FreshFeed” besi
 six-compartment feeder-card mark. The mark is original project artwork, not a manufacturer
 logo; PetSafe and FreshFeed are trademarks of their respective owners, and the project is
 not affiliated with either trademark owner.
+
+### FreshFeed countdown and Cancel
+
+The controls dialog shows the latest reported quick-feed minutes; it does not run a local countdown. HA state updated is a Home Assistant timestamp, not proof of device-report freshness. Cancel requires two taps and is available only while pending and eligible according to the integration. It is not an emergency stop. A submitted command is not proof of physical success: only corresponding device status is shown as observed, and uncertain durable writes are not replayed. One guarded live HA Start followed by one guarded HA Cancel produced cancel/idle reports, with the counter unchanged beyond the reported countdown plus 45 seconds. This is report-based acceptance, not proof of physical motion, ingestion or command causality.

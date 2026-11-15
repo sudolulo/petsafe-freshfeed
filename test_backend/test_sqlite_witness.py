@@ -713,7 +713,7 @@ class SQLiteWitnessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(loaded, OLD)
         loaded.update(NEW)
         self.assertEqual(await witness.async_load_last_intent(), OLD)
-        for operation in ("feed", "defrost", "refilled", "settings", "schedule"):
+        for operation in ("feed", "cancel", "defrost", "refilled", "settings", "schedule"):
             for state in ("pending", "unknown"):
                 value = {**OLD, "operation": operation, "state": state}
                 await witness.async_prepare_intent(value)

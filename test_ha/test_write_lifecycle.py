@@ -24,13 +24,13 @@ def _ids(store_id, binding_id):
     return {CONF_INTENT_STORE_ID: store_id, CONF_INTENT_BINDING_ID: binding_id}
 
 
-async def _provision(ctx, *, retained=None):
+async def _provision(ctx, *, retained=None, operation='feed'):
     from custom_components.petsafe_freshfeed.store_bootstrap import async_provision_store, open_store
     store_id = uuid4().hex
     await async_provision_store(ctx.root, binding_id=ctx.leaf, store_id=store_id)
     if retained is not None:
         await open_store(ctx.root, binding_id=ctx.leaf, store_id=store_id).async_prepare_intent(
-            {"operation_id": retained, "operation": "feed", "state": "pending"})
+            {"operation_id": retained, "operation": operation, "state": "pending"})
     return store_id
 
 
@@ -138,10 +138,11 @@ async def test_missing_or_corrupt_store_is_not_repaired(pinned, corrupt):
     assert not ctx.writes
 
 
-async def test_reloaded_coordinator_rearms_retained_intent_without_replay(pinned):
+@pytest.mark.parametrize('operation', ['feed', 'cancel'])
+async def test_reloaded_coordinator_rearms_retained_intent_without_replay(pinned, operation):
     ctx = pinned
     operation_id = uuid4().hex
-    store_id = await _provision(ctx, retained=operation_id)
+    store_id = await _provision(ctx, retained=operation_id, operation=operation)
     entry = await _setup(ctx, _ids(store_id, ctx.leaf))
     await _current(entry.runtime_data)
     old = entry.runtime_data.adapter
@@ -153,7 +154,20 @@ async def test_reloaded_coordinator_rearms_retained_intent_without_replay(pinned
     assert new is not old and old._stopped
     assert new.view["state"] == "uncertain"
     assert new.view["operation_id"] == operation_id
+    assert new.view["operation"] == operation
     assert new.view["session_id"] != session
+    assert not await new.async_recover(operation_id, session, confirmed=True)
+    if operation == 'cancel':
+        from test_write_adapter import _queue_reports
+        request = ctx.hass.async_create_task(
+            new.async_recover(operation_id, new.view['session_id'], confirmed=True),
+            eager_start=True,
+        )
+        assert new.view['recovery_phase'] == 'collecting'
+        _queue_reports(SimpleNamespace(bridge=entry.runtime_data.bridge),
+                       {'4': 'standby', '145': 2, '140': 'EAAA', '142': 0})
+        assert await request
+        assert new.view['recovery_phase'] == 'resolved'
     assert not ctx.writes
 
 

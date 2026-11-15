@@ -251,7 +251,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_valid_boundaries_and_operation_enums(self):
         await self.make()
-        for operation in ("feed", "defrost", "refilled", "settings", "schedule"):
+        for operation in ("feed", "cancel", "defrost", "refilled", "settings", "schedule"):
             receipt = await self.engine.async_send(operation, {
                 "1": False, "3": -(2**31), "110": True, "111": 2**31-1,
                 "120": "é" * 2048, "125": "", "140": 0, "142": 1,

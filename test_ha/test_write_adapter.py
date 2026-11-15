@@ -137,9 +137,9 @@ def _queue_reports(ctx, *items):
     bridge._flush()
 
 
-BASE_KEYS = {"state", "operation_id", "operation", "session_id", "reason", "storage_fault",
+BASE_KEYS = {"state", "operation_id", "operation", "session_id", "reason", "observed_failure", "storage_fault",
              "integrity_fault", "recovery_can_start", "recovery_phase",
-             "can_feed", "can_defrost", "can_refilled", "blocked_reason"}
+             "can_feed", "can_defrost", "can_refilled", "can_cancel", "cancel_reason", "blocked_reason"}
 
 
 def _check_view(adapter, **expected):
@@ -161,6 +161,37 @@ async def _retained(store, operation="schedule"):
 def _revision(value):
     from custom_components.petsafe_freshfeed.schedule_state import ScheduleState
     return ScheduleState().with_report(value, dt_util.utcnow()).revision
+
+
+async def test_cancel_sends_fixed_payload_and_retains_context(adapters, store, writes):
+    from custom_components.petsafe_freshfeed.services import acknowledgement, recovery_allowed
+    ctx = adapters
+    witness = GatedWitness(await _provision(store))
+    adapter = await _adapter(ctx, witness, ack=acknowledgement, recovery=recovery_allowed)
+    _queue_reports(ctx, {'4': 'standby', '145': 6, '140': 'EAEA', '142': 0})
+    assert adapter.view['can_cancel'] is True
+    result = await adapter.async_submit('cancel', {'140': 'IA=='}, confirmed=True)
+    assert result['admitted']
+    assert len(writes) == 1
+    from tinytuya import CONTROL
+    assert ctx.api.payload_calls == [((CONTROL, {'140': 'IA=='}), {})]
+    assert adapter._current.dps == {'140': 'IA=='}
+    assert witness.prepares[0]['operation'] == 'cancel'
+    assert adapter.view['state'] == 'uncertain'
+
+
+async def test_cancel_refused_if_pending_changes_during_witness(adapters, store, writes):
+    ctx = adapters
+    witness = GatedWitness(await _provision(store))
+    witness.gate = asyncio.Event()
+    adapter = await _adapter(ctx, witness)
+    _queue_reports(ctx, {'4': 'standby', '145': 1, '140': 'EAEA', '142': 0})
+    task = ctx.hass.async_create_task(adapter.async_submit('cancel', {'140': 'IA=='}, confirmed=True))
+    await asyncio.wait_for(witness.entered.wait(), 3)
+    _queue_reports(ctx, {'140': 'EAIA'})
+    witness.gate.set()
+    await task
+    assert not writes
 
 
 # ----- admission routes -------------------------------------------------------
