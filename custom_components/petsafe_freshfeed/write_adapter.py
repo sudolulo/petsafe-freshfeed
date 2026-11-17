@@ -16,6 +16,14 @@ an ordinary asynchronous push was not buffered before dispatch. A retained start
 never released by a cached or matching report: only explicit recovery can
 release it locally.
 
+Settings (DP110/125 bool, DP111 int 0..10, exactly one DP per request) need
+no confirmation but are refused on known feed/quick-feed/defrost activity. A
+submission waits at most ``SETTINGS_ACK_TIMEOUT`` seconds from the send
+boundary for a later eligible report of the same DP with the exact requested
+value; on expiry the window closes, nothing is retried or queried, a later
+matching report never acknowledges, and the intent stays uncertain until
+explicit recovery.
+
 Recovery is an explicit, confirmed request for the current operation/session.
 It collects only actual incoming reports numbered after the request on the
 same uninterrupted epoch, for at most ``RECOVERY_TIMEOUT`` seconds. No DP query,
@@ -28,7 +36,7 @@ Semantics (which report means what) belong to the injected predicates; the
 defaults acknowledge nothing and approve no recovery.
 
 Compatibility gates, stated plainly: the loaded-file and monitor control-flow
-fingerprints (``TuyaBridge._code_ok``, executor file I/O) are checked at each
+fingerprints (``LocalSource.code_ok``, executor file I/O) are checked at each
 submit immediately before the synchronous admission turn, not again during the
 lock wait and witness fsync, nor at recovery. Every later gate (admission,
 send boundary, recovery start and final validation) re-runs the synchronous,
@@ -47,13 +55,13 @@ from typing import Callable, Literal
 
 from .const import (
     DEFROST_START_VALUE, FEED_CANCEL_COMMAND, FEED_NOW_COMMAND, FEED_START_COMMAND, RECOVERY_TIMEOUT, REFILLED_VALUE,
-    WRITE_OPERATION_DPS, WRITE_SEND_TIMEOUT,
+    SETTINGS_ACK_TIMEOUT, WRITE_OPERATION_DPS, WRITE_SEND_TIMEOUT,
 )
 from .critical_transport import SendReceipt, _socket_open
 from .quick_feed import decode_quick_feed
 from .schedule_codec import ScheduleCodecError, decode_base64
-from .services import operation_reason, unsafe_reason
-from .tuya_bridge import DeviceReport, DispatchMark, _settle
+from .services import operation_reason, setting_request, unsafe_reason
+from .local_source import DeviceReport, DispatchMark, _settle
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -186,6 +194,10 @@ class WriteAdapter:
         self._live_dps = {}
         self._live_epoch = bridge.epoch
         self._live_sequence = -1
+        # Settings acknowledgement window (monotonic deadline per dispatched
+        # operation, from the send boundary) and the in-flight waiter.
+        self._ack_deadlines = {}
+        self._ack_wait = None
 
     # ----- shared state helpers ------------------------------------------------
 
@@ -220,7 +232,7 @@ class WriteAdapter:
     def _phase_view(self):
         if not self.transport.needs_reconciliation:
             return "resolved" if self._phase == "resolved" else "idle"
-        if self._submitting is not None:
+        if self._submitting is not None or self._ack_wait is not None:
             return "idle"
         if self._phase in ("collecting", "failed"):
             return self._phase
@@ -232,6 +244,7 @@ class WriteAdapter:
         return (phase in ("awaiting_user_confirmation", "failed")
                 and not storage and not integrity and not self._stopped
                 and self._submitting is None and self._collector is None
+                and self._ack_wait is None
                 and transport.needs_reconciliation
                 and transport.pending_operation_id is not None
                 and self._pending_operation() is not None
@@ -253,6 +266,10 @@ class WriteAdapter:
         elif self._submitting is not None:
             state, reason = "pending", None
             operation = self._submitting.operation
+        elif self._ack_wait is not None and self._current is not None:
+            # Sent; awaiting a later eligible report within the bounded window.
+            state, reason = "pending", None
+            operation = self._current.operation
         elif transport.needs_reconciliation:
             state = "uncertain"
         elif self._stopped:
@@ -330,6 +347,11 @@ class WriteAdapter:
 
     @staticmethod
     def _request_reason(operation, dps, base_revision, confirmed):
+        if type(operation) is str and operation == "settings":
+            # Exactly one writable setting DP with its strict value domain.
+            if base_revision is not None or setting_request(dps) is None:
+                return "invalid_request"
+            return None
         if type(operation) is not str or operation not in WRITE_OPERATION_DPS:
             return "invalid_operation"
         key = WRITE_OPERATION_DPS[operation]
@@ -362,7 +384,8 @@ class WriteAdapter:
             return "storage_fault"
         if integrity:
             return "integrity_fault"
-        if self._submitting is not None or getattr(transport, "_busy", True) is not False:
+        if (self._submitting is not None or self._ack_wait is not None
+                or getattr(transport, "_busy", True) is not False):
             return "busy"
         if self._collector is not None:
             return "recovery_in_progress"
@@ -384,7 +407,8 @@ class WriteAdapter:
         return None
 
     async def async_submit(self, operation: str, dps: dict[str, bool | int | str], *,
-                           base_revision: str | None = None, confirmed: bool = False) -> dict:
+                           base_revision: str | None = None, confirmed: bool = False,
+                           unchanged: Callable[[], bool] | None = None) -> dict:
         reason = (self._request_reason(operation, dps, base_revision, confirmed)
                   or self._gate_reason() or operation_reason(operation, self._live_dps))
         if reason is not None:
@@ -392,7 +416,7 @@ class WriteAdapter:
         # Loaded-code provenance needs file I/O: settle it BEFORE the final
         # synchronous admission turn, never abandoning the executor job.
         try:
-            code_ok = await _settle(self.hass.async_add_executor_job(self.bridge._code_ok))
+            code_ok = await _settle(self.hass.async_add_executor_job(self.bridge.code_ok))
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
@@ -405,6 +429,8 @@ class WriteAdapter:
                   or operation_reason(operation, self._live_dps))
         if reason is not None:
             return self._response(False, reason)
+        if operation == 'settings' and unchanged is not None and unchanged():
+            return {**self._response(True), "unchanged": True}
         selected_dps = dict(dps)
         if operation == 'feed':
             selected_dps['140'] = self._feed_command()
@@ -495,6 +521,8 @@ class WriteAdapter:
             self._reason = None
         elif operation_id in self._marks:
             decision = self._decisions.get(operation_id)
+            if decision not in _OBSERVED and context.operation == "settings":
+                decision = await self._await_setting_ack(operation_id)
             if decision in _OBSERVED:
                 await self._release(operation_id)
             else:
@@ -503,6 +531,32 @@ class WriteAdapter:
             self._reason = receipt.reason if receipt is not None else "send_cancelled"
         self._notify()
         return self._response(not rejected)
+
+    async def _await_setting_ack(self, operation_id):
+        """Wait, bounded from the send boundary, for a matching later report.
+
+        No retry and no query: on expiry the window closes for good, so a
+        later matching report never acknowledges and the intent stays
+        uncertain until explicit recovery.
+        """
+        event = asyncio.Event()
+        self._ack_wait = event
+        self._notify()
+        try:
+            remaining = self._ack_deadlines.get(operation_id, -math.inf) - monotonic()
+            if remaining > 0 and not self._stopped:
+                try:
+                    await asyncio.wait_for(event.wait(), remaining)
+                except TimeoutError:
+                    pass
+                except asyncio.CancelledError:
+                    _uncancel()  # absorbed: the window simply ends early
+        finally:
+            self._ack_wait = None
+            decision = self._decisions.get(operation_id)
+            if decision not in _OBSERVED:
+                self._ack_deadlines[operation_id] = -math.inf
+        return decision
 
     async def _release(self, operation_id):
         """Local release of THIS construction on an observed acknowledgement."""
@@ -552,12 +606,16 @@ class WriteAdapter:
         if (mark.epoch != context.epoch or not self._compatible_now()
                 or operation_reason(context.operation, self._live_dps)
                 or (context.operation == 'feed' and context.dps.get('140') != self._feed_command())
+                or (context.operation == 'settings' and setting_request(context.dps) is None)
                 or (context.operation == 'schedule' and self._revision_reason(
                     'schedule', self._admitted_revision))):
             raise ValueError('write_adapter_refused')
         context = replace(context, operation_id=mark.operation_id, epoch=mark.epoch)
         self._submitting = self._current = context
         self._marks[mark.operation_id] = mark
+        if context.operation == 'settings':
+            # Read at dispatch so the bound is the module's current value.
+            self._ack_deadlines[mark.operation_id] = monotonic() + SETTINGS_ACK_TIMEOUT
 
     def on_report(self, report: DeviceReport) -> None:
         transport = self.transport
@@ -593,6 +651,9 @@ class WriteAdapter:
                 or report.epoch != mark.epoch or report.sequence <= mark.sequence
                 or transport.pending_operation_id != operation_id):
             return
+        if (context.operation == 'settings'
+                and not monotonic() <= self._ack_deadlines.get(operation_id, -math.inf)):
+            return  # outside the bounded window: never an acknowledgement
         try:
             decision = self._ack(context, mark, report)
         except Exception:  # noqa: BLE001 - a failing predicate observes nothing
@@ -600,7 +661,9 @@ class WriteAdapter:
         if decision not in _OBSERVED:
             return
         self._decisions[operation_id] = decision
-        if self._submitting is None:
+        if self._ack_wait is not None:
+            self._ack_wait.set()  # the waiting submission releases in order
+        elif self._submitting is None:
             # Late acknowledgement after the drained send returned uncertain.
             self._track(self.hass.async_create_task(self._release(operation_id)))
 
@@ -640,9 +703,9 @@ class WriteAdapter:
                 or not 0 < timeout <= RECOVERY_TIMEOUT):
             return None
         # Number every already-decoded report now: all of it is pre-request.
-        self.bridge._flush()
+        self.bridge.flush()
         if (self._collector is not None or self._submitting is not None
-                or any(self._faults()) or not self._context_current(context)
+                or self._ack_wait is not None or any(self._faults()) or not self._context_current(context)
                 or not self._compatible_now() or unsafe_reason(self._live_dps)):
             return None
         collector = _Collector(context, self.bridge.last_sequence, self._recovery_predicate)
@@ -678,7 +741,7 @@ class WriteAdapter:
         """Final validation; synchronous, immediately before local release."""
         # Number every report a worker already decoded, so a just-arrived
         # active status (or connection break) is part of the evidence judged.
-        self.bridge._flush()
+        self.bridge.flush()
         transport = self.transport
         context = collector.context
         storage, integrity = self._faults()
@@ -768,6 +831,8 @@ class WriteAdapter:
         self._stopped = True
         if self._collector is not None:
             self._collector.invalidate("stopped")
+        if self._ack_wait is not None:
+            self._ack_wait.set()
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None

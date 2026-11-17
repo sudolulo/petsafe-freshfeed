@@ -1,4 +1,10 @@
-"""Single-attempt transport using a borrowed, already authenticated client.
+"""Single-attempt transport using an already authenticated client.
+
+Two admissions share one core: ``async_create`` (legacy, a borrowed Tuya Local
+wrapper's ``_api``/``_api_lock``; the check receives that wrapper) and
+``async_create_owned`` (a PetSafe-owned ``ClientOwner`` with public ``api``,
+``lock`` and ``is_current()``; the check receives the real owner, and a
+replaced api/lock or a non-current owner refuses every later send).
 
 This module authorizes no datapoint semantics. A future adapter must prove the
 actual loaded client, its authenticated connection and its shared lock. Nothing
@@ -308,6 +314,46 @@ def underlying_socket(sock):
     return sock
 
 
+class _LegacyBinding:
+    """Explicit adapter: a Tuya Local wrapper's private client aliases."""
+
+    __slots__ = ("target",)
+
+    def __init__(self, wrapper):
+        self.target = wrapper
+
+    @property
+    def api(self):
+        return getattr(self.target, "_api", None)
+
+    @property
+    def lock(self):
+        return getattr(self.target, "_api_lock", None)
+
+    def current(self):
+        return True
+
+
+class _OwnedBinding:
+    """A PetSafe-owned client owner: public ``api``/``lock``/``is_current``."""
+
+    __slots__ = ("target",)
+
+    def __init__(self, owner):
+        self.target = owner
+
+    @property
+    def api(self):
+        return getattr(self.target, "api", None)
+
+    @property
+    def lock(self):
+        return getattr(self.target, "lock", None)
+
+    def current(self):
+        return self.target.is_current() is True
+
+
 class CriticalTransport:
     """Fail-closed admission, durable uncertainty, and actual-thread ownership."""
 
@@ -318,6 +364,29 @@ class CriticalTransport:
                            max_receive_bytes: int = 65536,
                            dispatch_callback: Callable[[str], object] | None = None,
                            report_callback: Callable[[dict], None] | None = None):
+        """Legacy borrowed Tuya Local client; the check receives the wrapper."""
+        return await cls._async_create(
+            _LegacyBinding(wrapper), witness, compatibility_check=compatibility_check,
+            socket_deadline=socket_deadline, max_receive_bytes=max_receive_bytes,
+            dispatch_callback=dispatch_callback, report_callback=report_callback)
+
+    @classmethod
+    async def async_create_owned(cls, owner, witness: IntentWitness, *,
+                                 compatibility_check: Callable[[object, object, asyncio.Lock], bool],
+                                 socket_deadline: float = 3.0,
+                                 max_receive_bytes: int = 65536,
+                                 dispatch_callback: Callable[[str], object] | None = None,
+                                 report_callback: Callable[[dict], None] | None = None):
+        """PetSafe-owned client; the check receives the real owner, which must
+        also report ``is_current() is True`` at every compatibility gate."""
+        return await cls._async_create(
+            _OwnedBinding(owner), witness, compatibility_check=compatibility_check,
+            socket_deadline=socket_deadline, max_receive_bytes=max_receive_bytes,
+            dispatch_callback=dispatch_callback, report_callback=report_callback)
+
+    @classmethod
+    async def _async_create(cls, binding, witness, *, compatibility_check, socket_deadline,
+                            max_receive_bytes, dispatch_callback, report_callback):
         if (not _positive_number(socket_deadline) or socket_deadline > 3.0
                 or type(max_receive_bytes) is not int or not 1 <= max_receive_bytes <= 65536):
             raise ValueError("invalid_transport_bounds")
@@ -329,11 +398,13 @@ class CriticalTransport:
         self._loop = asyncio.get_running_loop()
         self._dispatch = dispatch_callback
         self._report = report_callback
-        self._wrapper = wrapper
+        self._binding = binding
         self._witness = witness
         self._check = compatibility_check
-        self._api = getattr(wrapper, "_api", None)
-        self._lock = getattr(wrapper, "_api_lock", None)
+        try:
+            self._api, self._lock = binding.api, binding.lock
+        except Exception:
+            raise CompatibilityError() from None
         self._socket_deadline = socket_deadline
         self._receive_limit = max_receive_bytes
         self._pending = None
@@ -370,12 +441,13 @@ class CriticalTransport:
 
     def _compatible(self):
         try:
-            if (self._api is None or self._wrapper._api is not self._api
-                    or self._wrapper._api_lock is not self._lock):
+            binding = self._binding
+            if (self._api is None or binding.api is not self._api
+                    or binding.lock is not self._lock or not binding.current()):
                 raise CompatibilityError()
-            result = self._check(self._wrapper, self._api, self._lock)
-            if (result is not True or self._wrapper._api is not self._api
-                    or self._wrapper._api_lock is not self._lock):
+            result = self._check(binding.target, self._api, self._lock)
+            if (result is not True or binding.api is not self._api
+                    or binding.lock is not self._lock or not binding.current()):
                 raise CompatibilityError()
         except Exception:
             raise CompatibilityError() from None

@@ -1,5 +1,46 @@
 # Changelog
 
+## Integration [0.4.0] - Unreleased (draft)
+
+### Added
+- Standalone entries: Tuya Local is not required. A PetSafe-owned local source keeps
+  exactly one connection, monitor and lock per feeder through the pinned Python
+  requirement `tinytuya==1.20.0`; the loaded TinyTuya is checked against
+  `owned_fingerprints.json` and any other version fails closed with
+  `owned_source_incompatible`. Critical dispatch keeps the one-attempt, no-resend,
+  no-replay guarantees.
+- Sign in with PetSafe now creates a standalone entry: one authenticated read-only
+  protocol 3.5 status check must succeed before anything is saved; LAN broadcasts are
+  advisory. New entries start read-only; controls are a separate options step.
+  Reconfigure changes only the address of a standalone entry.
+- Explicit, staged migration of a legacy entry (options: Connect directly, Continue,
+  Cancel, Remove the retired Tuya Local entry) with a durable private journal and a
+  required Home Assistant restart checkpoint. Preserves the entry, entity IDs,
+  history, schedule state, device-registry entry and retained-intent store/binding.
+  Cancellation only before the registry move (a cancelled entry may migrate again
+  later); forward-only afterwards, with an explicit host/local-key forward repair if
+  the Tuya Local entry was deleted or changed after the move. Tuya Local raw
+  entities on the device retire at the move. Migration is limited to Home Assistant
+  Core 2026.10.x.
+- Owned settings entities for standalone entries: stainless inserts and meal counter
+  switches, a brightness number (0-10) and a quick feed state sensor. They keep the
+  entity IDs of the retired Tuya Local raw entities so existing dashboards continue
+  to resolve. Writes require a complete, fresh safe status, go through the same
+  admission gates as other writes, validate input strictly and fail closed.
+
+### Changed
+- HACS metadata minimum `homeassistant` is `2026.10.0`.
+- Legacy entries are unchanged and never switch backend on upgrade; `tuya_local`
+  stays an optional `after_dependencies` entry only.
+- The Tuya Local setup assist and its bundled component profile copy were removed
+  (no longer shipped); the manual-install profile example remains for legacy entries.
+- Deleting an entry also removes its private migration journal.
+
+### Known limitations
+- TinyTuya is shared per Home Assistant installation; a future Tuya Local (or other
+  integration) pin of a different TinyTuya version can conflict with this exact pin.
+- No physical feeder command has been issued through the standalone connection.
+
 ## Integration [0.3.0] - 2026-11-17
 
 ### Added

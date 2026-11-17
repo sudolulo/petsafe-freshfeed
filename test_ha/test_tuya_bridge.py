@@ -66,6 +66,24 @@ async def test_actual_reports_and_hidden_connections(hass):
     assert '_cache_response' not in api.__dict__
 
 
+async def test_monitor_frame_split_and_contract_aliases(hass):
+    from custom_components.petsafe_freshfeed.tuya_bridge import TuyaBridge
+    api = Api()
+    bridge = TuyaBridge(hass, SimpleNamespace(_api=api), api, asyncio.Lock())
+    bridge.install()
+    reports = []
+    bridge.subscribe(reports.append, lambda *args: None)
+    api._cache_response({'dps': {'1': '/w==', '130': '2.5.18', '145': 2, '99': 2}})
+    await hass.async_block_till_done()
+    assert [(r.dps, r.ack_eligible) for r in reports] == [
+        ({'1': '/w==', '145': 2}, True), ({'130': '2.5.18'}, False)]
+    assert reports[1].sequence == reports[0].sequence + 1
+    # Class-level aliases: bound-method equality used by executor gates.
+    assert bridge._code_ok == bridge.code_ok and bridge._flush == bridge.flush
+    assert TuyaBridge._code_ok is TuyaBridge.code_ok and TuyaBridge._flush is TuyaBridge.flush
+    assert await bridge.async_detach() is True
+
+
 def test_allowlisted_files_and_bound_methods(tmp_path, monkeypatch):
     import hashlib
     import sys

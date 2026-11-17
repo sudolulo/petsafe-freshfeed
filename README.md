@@ -79,81 +79,135 @@ tools/with-ha-token.sh node tools/add-cards.mjs deploy/cards.json
 tools/with-ha-token.sh node tools/shoot-live.mjs
 ```
 
-## FreshFeed integration 0.3.0 (local release draft)
+## FreshFeed integration 0.4.0 (local release draft)
 
-Copy `custom_components/petsafe_freshfeed` to the Home Assistant custom components
-folder, restart HA, then add **PetSafe FreshFeed** and select the existing tuya_local
-source. In the integration options, explicitly enable controls to provision durable
-storage. Ordinary startup never provisions missing storage. Preserve the opaque
-store identity in the config entry and its SQLite database together; do not delete,
-reset or recreate them to clear uncertainty. Storage/identity faults block writes
-and cannot be waived by UI acknowledgement.
+Integration 0.4.0 adds standalone entries: Tuya Local is not required. A standalone
+entry owns exactly one local connection to the feeder through the pinned Python
+requirement `tinytuya==1.20.0`, installed by Home Assistant with the integration.
+Standalone setup requires Home Assistant Core `2026.10.0` or later (HACS metadata
+`homeassistant: 2026.10.0`); there is no maximum-version gate, and later Core
+releases need regression verification. Legacy entries (0.3.0 and earlier, or
+**Use an existing Tuya Local entry (legacy)**) stay on their tuya_local source until
+explicitly migrated; an upgrade never switches the backend. `tuya_local` remains only
+an optional `after_dependencies` manifest entry for legacy start-up ordering, never a
+required dependency.
+
+TinyTuya coexistence: Home Assistant installs one TinyTuya shared by every
+integration. Before connecting, the standalone source checks the loaded TinyTuya
+version and files against `owned_fingerprints.json`; a mismatch fails closed with
+`owned_source_incompatible`. Tuya Local 2026.10.0 also uses TinyTuya 1.20.0, but a
+future Tuya Local (or other integration) pin change can conflict with this exact pin;
+the standalone entry then stays unavailable rather than running unaudited code.
+
+For a manual install, copy `custom_components/petsafe_freshfeed` to the Home Assistant
+custom components folder and restart HA. In the integration options, explicitly
+enable controls to provision durable storage. Ordinary startup never provisions
+missing storage. Preserve the opaque store identity in the config entry and its SQLite
+database together; do not delete, reset or recreate them to clear uncertainty.
+Storage/identity faults block writes and cannot be waived by UI acknowledgement.
 
 When the build bundles the app profile, adding **PetSafe FreshFeed** first shows a
-menu: **Sign in with PetSafe** or **Use an existing Tuya Local entry**. The existing
-path behaves exactly as before, including the manual profile copy. Builds without the
-bundled app profile show no menu and offer only the existing path.
+menu: **Sign in with PetSafe** (standalone) or **Use an existing Tuya Local entry
+(legacy)**. The legacy path behaves exactly as before, including the manual profile
+copy. Builds without the bundled app profile show no menu and offer only the legacy
+path.
 
-### Sign in with PetSafe
+### Sign in with PetSafe (standalone)
 
-1. Install Tuya Local release `2026.10.0` exactly (the pinned revision in
-   `tuya_fingerprints.json`) from HACS and restart Home Assistant. HACS installs the
-   latest release by default, so choose `2026.10.0` explicitly, for example with
-   HACS **Redownload** and its version selector. With any other Tuya Local version,
-   set the feeder up in Tuya Local yourself and use **Use an existing Tuya Local
-   entry**.
-2. Install this integration and restart.
-3. Add **PetSafe FreshFeed**, choose **Sign in with PetSafe**, and enter the region,
+1. Install this integration and restart Home Assistant.
+2. Add **PetSafe FreshFeed**, choose **Sign in with PetSafe**, and enter the region,
    email and password of the PetSafe app account.
+3. Choose the feeder if there are several and confirm. The entry is created
+   read-only; enable controls afterwards in its **Configure** options.
 
 Sign-in supports four regions only, by country code: 1 (Americas), 44 (Europe),
-91 (India) and 7 (Russia). Accounts in any other region need the existing path.
+91 (India) and 7 (Russia). Accounts in any other region need the legacy path.
 
-The integration then signs in to the PetSafe (Tuya platform) cloud read-only, lists the
-account's homes and supported FreshFeed devices, and takes the feeder's device ID, local
-key and name (a choice is offered when there is more than one feeder). It listens
-passively on the LAN (UDP 6666/6667, up to 8 seconds, nothing sent) for the feeder's
-broadcast to learn its address and protocol version; if none arrives it asks for a
-private IPv4 address (10/8, 172.16/12 or 192.168/16; 100.64/10 and IPv6-only LANs are
-not supported, use the existing path). It checks that the loaded Tuya Local is the
-pinned release, installs the `petsafe_freshfeed_raw` profile into Tuya Local's
-`devices/` folder if it is absent (it never overwrites a different file), drives
-Tuya Local's own setup flow to create the Tuya Local entry, and then creates the
-PetSafe FreshFeed entry bound to it. A loaded Tuya Local entry for the same feeder
-with that profile is reused instead; any other Tuya Local entry for it stops setup.
-Sign-in is limited to one attempt per 60 seconds, with no automatic retry. The limit
-is held in memory per Home Assistant instance and resets when Home Assistant restarts.
+The integration signs in to the PetSafe (Tuya platform) cloud read-only and takes the
+feeder's device ID, local key and name. It listens passively on the LAN (UDP
+6666/6667, up to 8 seconds, nothing sent) for the feeder's broadcast; a broadcast is
+only a hint, because it can be forged. If none arrives it asks for a private IPv4
+address (10/8, 172.16/12 or 192.168/16; 100.64/10 and IPv6-only LANs are not
+supported). Before anything is saved, one authenticated read-only status check over
+local protocol 3.5 must succeed with the account's local key; a wrong key, stale
+address or forged broadcast fails setup with nothing saved and no command sent. Other
+protocols are refused. An existing PetSafe entry for the feeder, or an enabled Tuya
+Local entry holding its connection, stops setup. Sign-in is limited to one attempt
+per 60 seconds, with no automatic retry; the limit is held in memory per Home
+Assistant instance and resets when Home Assistant restarts.
 
 What is sent where: HTTPS to the PetSafe/Tuya mobile API hosts for the selected
 region, plus a server-directed API host only if it is on a closed allowlist of Tuya
 API domains; outgoing headers are fixed (`User-Agent: petsafe-freshfeed/<version>`).
-On the LAN, Tuya Local's connection test sends read-only status queries to the
-feeder. No feeder command is sent during setup, and setup contacts nothing else.
+On the LAN, the read-only status check. No feeder command is sent during setup.
 
-What is stored: the password is never stored, and neither is the email. The local key
-and device ID are stored only in the Tuya Local entry, exactly as when you create that
-entry by hand. The PetSafe FreshFeed entry holds the same keys as on the existing path.
-Home Assistant backups contain the Tuya Local entry, including the local key and
-device ID, so treat backups accordingly.
+What is stored: the password and the email are never stored. The device ID, local
+key, address and protocol are stored in the PetSafe FreshFeed config entry and kept
+out of logs and error messages. Home Assistant backups contain that entry, including
+the local key, so treat every backup as secret. Sign-in creates a new account session
+on the PetSafe/Tuya cloud; whether this signs the phone app out has not been checked.
+**Reconfigure** on a standalone entry changes only its address after one read-only
+check, keeping the entry, device, entities, history and controls store.
 
-Caveats:
+### Migrating a legacy entry
 
-- Tuya Local logs the feeder's data points (DPS) at warning level during its setup.
-- Sign-in creates a new account session on the PetSafe/Tuya cloud. Whether this
-  signs the PetSafe phone app out has not been checked.
-- A Tuya Local update can remove the installed profile file; the integration
-  reinstalls it on the next sign-in setup. Entries made on the existing path still
-  need the manual copy.
-- Accounts that need MFA or another challenge, or are locked, are refused with a
-  fixed message; use the existing path.
-- If setup stops after the Tuya Local entry was created, that entry is kept and the
-  message says how to finish with **Use an existing Tuya Local entry**.
+Migration moves a legacy entry to the standalone connection in place, keeping the
+PetSafe entry ID, entity IDs, dashboard links, history, schedule state, the existing
+device-registry entry and the retained-intent store and binding IDs; the store is
+never copied, reset or recreated. It requires Home Assistant Core `2026.10.x` and is
+refused on any other Core release. No feeder command is sent. Make a full backup first
+(it contains the local key); the key is read once from the selected Tuya Local entry
+into the PetSafe entry and never shown.
 
-The adapter uses the existing authenticated client, not a second LAN connection.
+1. Options: **Connect directly (migrate away from Tuya Local)**. The preview lists
+   the Tuya Local raw entities that will retire. Confirming stops PetSafe controls,
+   waits for in-flight work and disables (not deletes) the Tuya Local entry.
+2. Restart Home Assistant. The restart checkpoint is required: only a different HA
+   process that observes the Tuya Local entry still disabled and unloaded may
+   continue; otherwise the migration stays fenced and **Continue the migration**
+   repeats the checkpoint (re-staging from the unchanged Tuya Local entry if a power
+   loss lost the staged copy; a lost host override cannot be guessed, so then only
+   cancel remains). Do not edit the Tuya Local entry while a migration is open.
+3. Options: **Continue the migration**. An authenticated read-only protocol 3.5
+   status check runs first, then the same device moves to PetSafe FreshFeed and the
+   connection is checked again. A host name or automatic protocol requires an
+   explicit private IPv4 address and protocol 3.5; there is no automatic downgrade.
+
+When the device moves, HA removes the Tuya Local raw entities on it; raw entity IDs
+are outside preservation scope. **Cancel the migration** is offered only before the
+move and re-enables the Tuya Local entry only if it was enabled before; the entry
+then starts as legacy again (also after later edits to the Tuya Local entry) and a new
+migration can be started from the options. If
+a power loss leaves the journal ahead of HA's delayed registry save, Continue redoes
+the same move forward; it is never cancellable once the move began. After the move
+recovery is forward-only: the device is never moved back (that would delete PetSafe
+entities); a failed check keeps controls stopped and **Continue the migration** can
+be repeated, optionally with a corrected address. If the Tuya Local entry was deleted
+or changed after the move and the standalone fields were lost, Continue also accepts
+the feeder's local key (it is never re-read from a changed or deleted entry). Once
+verified, start-up no longer depends on the Tuya Local entry, which may be edited or
+deleted. Controls stay fenced at start-up
+while a migration is unfinished; a retained uncertain command is never replayed,
+released from cached state or erased.
+
+Uninstall eligibility: after completion and a later HA restart that re-observes the
+standalone configuration and device ownership, the options offer **Remove the retired
+Tuya Local entry**. It removes only that entry; the Tuya Local integration is not
+uninstalled. Check that no other entry (including disabled or ignored ones) uses Tuya
+Local before uninstalling it. Re-enabling a retired Tuya Local entry is an unsupported
+ownership conflict: PetSafe stops its own connection but cannot stop another
+integration's.
+
+### Legacy Tuya Local entries
+
+A legacy entry uses the existing authenticated Tuya Local client, not a second LAN connection.
 A public-source compatibility allowlist gates receive ownership and transport;
 unrecognized loaded code fails closed. Local fixture tests do not establish that
 a production runtime is compatible. Native raw controls remain accessible to HA
 administrators outside this adapter and are not endorsed critical command paths.
+Standalone entries expose no raw writable entities.
+
+### Controls, schedule and history (both entry kinds)
 
 Schedule freshness is `current` only after an actual DP1 report on the uninterrupted
 connection, `last_known` after restart/reload/disconnect, or `unknown` if never seen.
@@ -220,9 +274,8 @@ data: {entry_id: synthetic_entry, operation_id: synthetic_operation, session_id:
 The local browser harness allocates a unique `harness/out/parity-*` directory and
 preserves existing output. Local B/H/F/V checks are software evidence only: no loaded
 production-runtime admission, hardware verification, acoustic-effect check, deployment,
-or physical-ingestion success is claimed. Integration version 0.3.0 is independent of
-the npm package 0.3.0 and card internal 0.2.0 versions; the matching numbers are a
-coincidence, not a coupling.
+or physical-ingestion success is claimed. Integration version 0.4.0 is independent of
+the npm package 0.3.0 and card internal 0.2.0 versions.
 
 ## Read-only raw device data
 

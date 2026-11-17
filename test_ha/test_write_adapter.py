@@ -483,7 +483,7 @@ async def test_request_validation_rejects_before_prepare(adapters, store, writes
         (("feed", {"140": "MA=="}), {"confirmed": True}, "invalid_request"),  # now
         (("defrost", {"142": True}), {"confirmed": True}, "invalid_request"),
         (("refilled", {"120": 1}), {"confirmed": True}, "invalid_request"),
-        (("settings", {"3": 1}), {"confirmed": True}, "invalid_operation"),
+        (("settings", {"3": 1}), {"confirmed": True}, "invalid_request"),
         (("feed", {"140": "EA=="}), {"confirmed": True, "base_revision": "x"},
          "invalid_request"),
     ]

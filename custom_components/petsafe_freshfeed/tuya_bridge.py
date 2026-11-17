@@ -33,7 +33,6 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import datetime, timezone
 import functools
 import logging
@@ -43,6 +42,10 @@ from time import monotonic, time
 from .critical_transport import (
     CompatibilityError, CriticalTransport, IntentWitness, _socket_open, underlying_socket,
 )
+# Re-exported for compatibility: the neutral contract lives in local_source.
+from .local_source import (  # noqa: F401
+    ACK_DPS, OBSERVED_DPS, DeviceReport, DispatchMark, _settle, split_frame,
+)
 from .source_binding import SourceBindingError, bind_source
 from .tuya_compat import (
     FAILURE, check_loaded_source, check_receive_control_flow, disown_attribute,
@@ -50,53 +53,10 @@ from .tuya_compat import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-_DPS = frozenset(("1", "4", "14", "140", "142", "145", "150"))
 _HOOKS = ("_cache_response", "_get_socket", "_check_socket_close", "set_socketPersistent", "close")
 # Upper bound for the upstream monitor to observe its stop flag and exit
 # through its own bounded I/O and backoff. Exceeding it aborts the claim.
 _STOP_TIMEOUT = 60.0
-
-
-@dataclass(frozen=True)
-class DeviceReport:
-    epoch: int
-    sequence: int
-    at: datetime
-    dps: dict[str, bool | int | str]
-    ack_eligible: bool = True
-
-
-@dataclass(frozen=True)
-class DispatchMark:
-    """Watermark captured at the actual send boundary, on the owning loop.
-
-    Already decoded reports are numbered before the mark. A later sequence
-    alone does not prove the device sent a frame after dispatch: even ordinary
-    asynchronous pushes may have been buffered before the write.
-    """
-
-    operation_id: str
-    epoch: int
-    sequence: int
-
-
-async def _settle(future):
-    """Await an executor future/task to its ACTUAL completion.
-
-    Cancellation is remembered, never forwarded to the underlying work, and
-    re-raised only once that work has settled.
-    """
-    cancelled = False
-    while not future.done():
-        try:
-            await asyncio.wait({future})
-        except asyncio.CancelledError:
-            cancelled = True
-    if cancelled:
-        if not future.cancelled():
-            future.exception()  # retrieved: never an unhandled private error
-        raise asyncio.CancelledError()
-    return future.result()
 
 
 class TuyaBridge:
@@ -164,22 +124,21 @@ class TuyaBridge:
         self._originals[name] = original
 
         def hook(*args, _name=name, _original=original, **kwargs):
-            dps = None
+            parts = ()
             with self._guard:
                 self._note_socket()
                 # Copy actual decoded results BEFORE the upstream cache merges.
                 if _name == "_cache_response" and args and isinstance(args[0], dict):
-                    incoming = args[0].get("dps")
-                    if isinstance(incoming, dict):
-                        dps = {key: value for key, value in incoming.items()
-                               if key in _DPS and type(value) in (bool, int, str)}
+                    parts = split_frame(args[0].get("dps"), exchange=False)
             try:
                 return _original(*args, **kwargs)
             finally:
                 with self._guard:
                     self._note_socket()
-                    if dps and self._active:
-                        self._enqueue(("report", datetime.now(timezone.utc), dps))
+                    if parts and self._active:
+                        at = datetime.now(timezone.utc)
+                        for dps, eligible in parts:
+                            self._enqueue(("report", at, dps, eligible))
 
         own_attribute(self.api, name, hook, original)
         self._installed[name] = hook
@@ -202,12 +161,12 @@ class TuyaBridge:
             return False
         self._events.append((self._generation, item))
         try:
-            self.hass.loop.call_soon_threadsafe(self._flush)
+            self.hass.loop.call_soon_threadsafe(self.flush)
         except RuntimeError:
             pass  # closed loop: nothing can be delivered any more
         return True
 
-    def _flush(self):
+    def flush(self):
         """Owning loop: assign epochs/sequences and deliver in arrival order."""
         with self._guard:
             items = list(self._events)
@@ -228,6 +187,9 @@ class TuyaBridge:
                 self.last_sequence += 1
                 eligible = item[3] if len(item) > 3 else True
                 self._deliver_report(DeviceReport(self.epoch, self.last_sequence, item[1], item[2], eligible))
+
+    # Class-level alias (not a wrapper): bound-method equality must hold.
+    _flush = flush
 
     def _deliver_connection(self, epoch, connected):
         for _, callback in tuple(self._subscribers):
@@ -303,10 +265,14 @@ class TuyaBridge:
         if not ok:
             raise ValueError(FAILURE)
 
-    def _code_ok(self):
+    def code_ok(self):
         """Executor: provenance of loaded code and exact monitor control flow."""
         return (check_loaded_source(self.wrapper, self.api, self.lock) is True
                 and check_receive_control_flow(self.wrapper) is True)
+
+    # Class-level alias (not a wrapper): existing executor gates compare
+    # bound methods, so ``bridge._code_ok == bridge.code_ok`` must hold.
+    _code_ok = code_ok
 
     def _restart_original(self):
         wrapper = self.wrapper
@@ -341,7 +307,7 @@ class TuyaBridge:
                     return
                 raise ValueError(FAILURE)
             self._preflight()
-            if not await self.hass.async_add_executor_job(self._code_ok):
+            if not await self.hass.async_add_executor_job(self.code_ok):
                 raise ValueError(FAILURE)
             self._preflight()
             # --- mutation starts here: stop the upstream monitor gracefully ---
@@ -553,7 +519,7 @@ class TuyaBridge:
         if not callable(on_dispatch):
             raise ValueError(FAILURE)
         await self.async_claim_receive()
-        if not await self.hass.async_add_executor_job(self._code_ok):
+        if not await self.hass.async_add_executor_job(self.code_ok):
             raise ValueError(FAILURE)
         generation = self._generation
         if self._detaching or not self._active or self._claim is None:
@@ -590,7 +556,7 @@ class TuyaBridge:
         if not self._owned(generation):
             raise ValueError(FAILURE)
         epoch = self.epoch
-        self._flush()
+        self.flush()
         if (self.epoch != epoch or not self._owned(generation) or not self.is_current()
                 or not self._binding_current()):
             raise ValueError(FAILURE)
@@ -604,10 +570,10 @@ class TuyaBridge:
             if generation is not self._generation:
                 return
             self._note_socket()
-            actual = {key: value for key, value in dps.items()
-                      if key in _DPS and type(value) in (bool, int, str)}
-            if actual:
-                self._enqueue(("report", datetime.now(timezone.utc), actual, False))
+            at = datetime.now(timezone.utc)
+            # Exchange frames are never acknowledgement-eligible.
+            for actual, eligible in split_frame(dps, exchange=True):
+                self._enqueue(("report", at, actual, eligible))
 
     async def async_wait_idle(self, timeout: float = 5.0) -> bool:
         """True once no claim/detach transition runs and deliveries are flushed."""
@@ -618,11 +584,14 @@ class TuyaBridge:
             if monotonic() >= deadline:
                 return False
             await asyncio.sleep(0.01)
-        self._flush()
+        self.flush()
         return True
 
-    async def async_detach(self):
-        """Drain/restore receive ownership, then remove observation hooks."""
+    async def async_detach(self) -> bool:
+        """Drain/restore receive ownership, then remove observation hooks.
+
+        Returns True once complete (legacy detach never refuses).
+        """
         self._detaching = True
         self._abort_requested.set()  # an in-flight claim stops waiting promptly
         # Obsolete every queued or future callback before any await.
@@ -643,6 +612,7 @@ class TuyaBridge:
                                 delattr(self.api, name)
                             disown_attribute(self.api, name, hook)
                         self._installed.clear()
+        return True
 
 
 async def async_attach(hass, source_entry, registry_device):

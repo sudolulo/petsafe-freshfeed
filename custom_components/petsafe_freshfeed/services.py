@@ -4,7 +4,10 @@ Observed acknowledgements describe device status, never physical success.
 Schedule admission compares the last pushed revision; an external writer's
 approximately one-second push latency remains a race, not a conditional write.
 """
-from .const import DOMAIN, FEED_CANCEL_COMMAND, WRITE_OPERATION_DPS
+from .const import (
+    BRIGHTNESS_MAX, BRIGHTNESS_MIN, DOMAIN, FEED_CANCEL_COMMAND, SETTING_BOOL_DPS,
+    SETTING_BRIGHTNESS_DP, WRITE_OPERATION_DPS,
+)
 from .quick_feed import decode_quick_feed
 from .schedule_codec import MealEntry, ScheduleCodecError, decode_base64, encode_base64
 
@@ -15,6 +18,25 @@ _COMMANDS = {'feed': 'EA==', 'cancel': FEED_CANCEL_COMMAND, 'defrost': 1, 'refil
 
 def _counter(value):
     return type(value) is int and 1 <= value <= 6
+
+
+def setting_value_ok(dp, value):
+    """Exact value domain of one writable setting DP; no coercion."""
+    if dp in SETTING_BOOL_DPS:
+        return type(value) is bool
+    if dp == SETTING_BRIGHTNESS_DP:
+        return type(value) is int and BRIGHTNESS_MIN <= value <= BRIGHTNESS_MAX
+    return False
+
+
+def setting_request(dps):
+    """The single (dp, value) of a valid settings request, else None."""
+    if type(dps) is not dict or len(dps) != 1:
+        return None
+    (dp, value), = dps.items()
+    if type(dp) is not str or not setting_value_ok(dp, value):
+        return None
+    return dp, value
 
 
 def unsafe_reason(dps):
@@ -87,6 +109,13 @@ def acknowledgement(context, mark, report):
     elif context.operation == 'refilled':
         if type(dps.get('145')) is int and dps['145'] == 1:
             return 'observed'
+    elif context.operation == 'settings':
+        # Same DP, same exact type and value (False is not 0, 4 is not True).
+        request = setting_request(context.dps)
+        if request is not None and request[0] in dps:
+            value = dps[request[0]]
+            if type(value) is type(request[1]) and value == request[1]:
+                return 'observed'
     return 'ignore'
 
 
@@ -120,6 +149,16 @@ def recovery_allowed(context, evidence):
                 and decode_quick_feed(dps.get('140')).status == 'idle')
     if context.operation == 'defrost':
         return type(dps.get('142')) is int and dps['142'] == 0
+    if context.operation == 'settings':
+        if operation_reason('settings', dps) is not None:
+            return False
+        # A retained startup intent (no in-memory DP) needs only safe status;
+        # a known request needs a post-request report of that setting DP.
+        if not context.dps:
+            return True
+        request = setting_request(context.dps)
+        return (request is not None and request[0] in dps
+                and setting_value_ok(request[0], dps[request[0]]))
     return context.operation == 'refilled'
 
 

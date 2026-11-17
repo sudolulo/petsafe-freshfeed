@@ -1937,6 +1937,135 @@ class DurableWitnessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.api.calls, [])
 
 
+class Owner:
+    """Synthetic PetSafe-owned client owner (no Tuya Local wrapper shape)."""
+
+    def __init__(self, api, lock):
+        self.api = api
+        self.lock = lock
+        self.current = True
+
+    def is_current(self):
+        return self.current
+
+
+class OwnedTransportTests(unittest.IsolatedAsyncioTestCase):
+    """async_create_owned shares the core; the real owner is validated."""
+
+    async def asyncSetUp(self):
+        self.api = FakeAPI()
+        self.owner = Owner(self.api, asyncio.Lock())
+        self.witness = MemoryWitness()
+        self.checked = []
+        self.engine = None
+
+    async def asyncTearDown(self):
+        if self.engine:
+            self.assertTrue(await self.engine.async_wait_idle(timeout=2))
+
+    def check(self, owner, api, lock):
+        self.checked.append((owner, api, lock))
+        return True
+
+    async def make(self, **kwargs):
+        self.engine = await CriticalTransport.async_create_owned(
+            self.owner, self.witness, compatibility_check=self.check, **kwargs)
+        return self.engine
+
+    async def test_owned_check_receives_real_owner(self):
+        await self.make()
+        self.assertEqual(self.checked, [(self.owner, self.api, self.owner.lock)])
+        self.assertFalse(hasattr(self.owner, "_api"))
+        receipt = await self.engine.async_send("settings", {"110": True})
+        self.assertEqual(receipt.outcome, "unknown")
+        self.assertEqual(len(self.api.socket.writes), 1)
+
+    async def test_owned_not_current_refused(self):
+        self.owner.current = False
+        with self.assertRaises(CompatibilityError):
+            await self.make()
+        self.owner.current = True
+        await self.make()
+        self.owner.current = False
+        receipt = await self.engine.async_send("settings", {"110": True})
+        self.assertEqual((receipt.outcome, receipt.reason), ("not_sent", "incompatible"))
+        self.assertEqual(self.api.socket.writes, [])
+
+    async def test_owned_owner_replacement_refused(self):
+        for attribute in ("api", "lock"):
+            with self.subTest(attribute=attribute):
+                self.api = FakeAPI()
+                original = (self.api, asyncio.Lock())
+                self.owner = Owner(*original)
+                self.witness = MemoryWitness()
+                await self.make()
+                setattr(self.owner, attribute,
+                        FakeAPI() if attribute == "api" else asyncio.Lock())
+                receipt = await self.engine.async_send("settings", {"110": True})
+                self.assertEqual((receipt.outcome, receipt.attempted, receipt.reason),
+                                 ("not_sent", False, "incompatible"))
+                self.assertEqual(self.api.payloads, [])
+                self.assertEqual(self.api.socket.writes, [])
+                self.assertEqual(self.owner.api.socket.writes, [])
+                # The retained durable record stays authoritative.
+                self.assertEqual(self.witness.record["state"], "pending")
+                self.assertEqual(self.witness.record["operation_id"], receipt.operation_id)
+                self.assertTrue(await self.engine.async_wait_idle(timeout=2))
+                self.owner.api, self.owner.lock = original
+                fresh = await self.make()
+                self.assertTrue(fresh.needs_reconciliation)
+                self.assertEqual(fresh.pending_operation_id, receipt.operation_id)
+                again = await fresh.async_send("settings", {"110": True})
+                self.assertEqual(again.reason, "blocked")
+                self.assertEqual(self.api.socket.writes, [])
+
+    async def test_owned_bounds_and_hooks_validated(self):
+        with self.assertRaises(ValueError):
+            await self.make(socket_deadline=4.0)
+        with self.assertRaises(ValueError):
+            await self.make(dispatch_callback=1)
+        with self.assertRaises(CompatibilityError):
+            await CriticalTransport.async_create_owned(
+                SimpleNamespace(api=self.api, lock=object(), is_current=lambda: True),
+                self.witness, compatibility_check=self.check)
+
+    async def test_legacy_create_signature_unchanged(self):
+        import inspect
+        params = inspect.signature(CriticalTransport.async_create).parameters
+        self.assertEqual(list(params), ["wrapper", "witness", "compatibility_check",
+                                        "socket_deadline", "max_receive_bytes",
+                                        "dispatch_callback", "report_callback"])
+        self.assertEqual(params["wrapper"].kind, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        for name in ("compatibility_check", "socket_deadline", "max_receive_bytes",
+                     "dispatch_callback", "report_callback"):
+            self.assertEqual(params[name].kind, inspect.Parameter.KEYWORD_ONLY)
+        self.assertEqual((params["socket_deadline"].default, params["max_receive_bytes"].default,
+                          params["dispatch_callback"].default, params["report_callback"].default),
+                         (3.0, 65536, None, None))
+        owned = inspect.signature(CriticalTransport.async_create_owned).parameters
+        self.assertEqual(list(owned), ["owner", "witness", "compatibility_check",
+                                       "socket_deadline", "max_receive_bytes",
+                                       "dispatch_callback", "report_callback"])
+        # Legacy check still receives the actual Tuya Local wrapper.
+        wrapper = SimpleNamespace(_api=self.api, _api_lock=asyncio.Lock())
+        seen = []
+        self.engine = await CriticalTransport.async_create(
+            wrapper, self.witness, compatibility_check=lambda *args: seen.append(args) or True)
+        self.assertEqual(seen, [(wrapper, self.api, wrapper._api_lock)])
+
+    async def test_report_types_reexported(self):
+        from custom_components.petsafe_freshfeed import local_source, tuya_bridge
+        self.assertIs(tuya_bridge.DeviceReport, local_source.DeviceReport)
+        self.assertIs(tuya_bridge.DispatchMark, local_source.DispatchMark)
+        self.assertIs(tuya_bridge._settle, local_source._settle)
+        report = local_source.DeviceReport(1, 2, None, {"1": "x"})
+        self.assertTrue(report.ack_eligible)
+        with self.assertRaises(FrozenInstanceError):
+            report.sequence = 3
+        with self.assertRaises(FrozenInstanceError):
+            local_source.DispatchMark("a", 1, 2).epoch = 5
+
+
 class ShutdownTests(unittest.TestCase):
     def test_asyncio_run_shutdown_waits_for_actual_thread_restoration(self):
         entered, release, finishing = threading.Event(), threading.Event(), threading.Event()

@@ -15,7 +15,19 @@ SENSORS = (
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    async_add_entities(FreshFeedSensor(entry.runtime_data, entry.entry_id, key) for key in SENSORS)
+    entities = [FreshFeedSensor(entry.runtime_data, entry.entry_id, key) for key in SENSORS]
+    if entry.runtime_data._owned:
+        entities.append(OwnedQuickFeedState(entry.runtime_data, entry.entry_id, "quick_feed_state"))
+    async_add_entities(entities)
+
+
+class OwnedQuickFeedState(FreshFeedEntity, SensorEntity):
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_name = "Quick feed state"
+
+    @property
+    def native_value(self):
+        return self.hub._observed.get(140)
 
 
 class FreshFeedSensor(FreshFeedEntity, RestoreSensor):

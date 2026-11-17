@@ -14,7 +14,7 @@
         },
         "menu_options": {
           "account": "Sign in with PetSafe",
-          "existing": "Use an existing Tuya Local entry"
+          "existing": "Use an existing Tuya Local entry (legacy)"
         }
       },
       "existing": {
@@ -31,7 +31,7 @@
       },
       "account": {
         "title": "Sign in with PetSafe",
-        "description": "Sign in with your PetSafe app email and password to find your feeder. The password is used for this one sign-in and is never stored. After each attempt wait 60 seconds before trying again.",
+        "description": "Sign in with your PetSafe app email and password to find your feeder. PetSafe FreshFeed then connects to the feeder directly on your local network; Tuya Local is not needed. The password is used for this one sign-in and is never stored. After each attempt wait 60 seconds before trying again.",
         "data": {
           "country": "Region",
           "email": "Email",
@@ -50,19 +50,20 @@
       },
       "host": {
         "title": "Feeder address",
-        "description": "The feeder did not answer on the local network. Enter its local IPv4 address (10.x.x.x, 172.16.x.x to 172.31.x.x, or 192.168.x.x), for example from your router's client list.",
+        "description": "The feeder was not found on the local network, or it did not accept the local connection at that address. Enter its local IPv4 address (10.x.x.x, 172.16.x.x to 172.31.x.x, or 192.168.x.x), for example from your router's client list.",
         "data": {
           "host": "IP address"
         }
       },
       "confirm": {
         "title": "Add {name}",
-        "description": "{setup} {profile} Without controls no commands are sent to the feeder.",
+        "description": "PetSafe FreshFeed connects to the feeder directly on your local network, with the local key from your PetSafe account; Tuya Local is not used. Before anything is saved, one read-only status check confirms the connection. The feeder is added read-only: no commands are sent to it. Controls are a separate, explicit step afterwards."
+      },
+      "reconfigure": {
+        "title": "Feeder address",
+        "description": "Enter the feeder's new local IPv4 address (10.x.x.x, 172.16.x.x to 172.31.x.x, or 192.168.x.x). The entry is stopped while one read-only status check confirms the new address, then started again. Only the address changes: the entry, its device, its entities, its history and its controls store are kept.",
         "data": {
-          "enable_controls": "Enable controls"
-        },
-        "data_description": {
-          "enable_controls": "Creates a local retained-intent store once. Controls stay locked after every restart until you check the feeder and clear any uncertain command."
+          "host": "IP address"
         }
       }
     },
@@ -74,30 +75,28 @@
       "cannot_connect": "The PetSafe service could not be reached or sent an unexpected answer.",
       "no_feeders": "No supported FreshFeed feeder was found in this account.",
       "rate_limited": "Wait 60 seconds between sign-in attempts.",
-      "invalid_host": "Enter a private IPv4 address (10.x.x.x, 172.16.x.x to 172.31.x.x, or 192.168.x.x)."
+      "invalid_host": "Enter a private IPv4 address (10.x.x.x, 172.16.x.x to 172.31.x.x, or 192.168.x.x).",
+      "local_admission_failed": "The feeder did not accept a read-only local connection at this address with the key from your PetSafe account. Check the address and that the feeder is powered and on the same network. Nothing was saved."
     },
     "abort": {
       "no_source": "No tuya_local PetSafe FreshFeed device found.",
       "already_configured": "This FreshFeed device is already configured.",
+      "tuya_local_conflict": "A Tuya Local entry for this feeder is enabled and already holds its local connection. Use \"Use an existing Tuya Local entry (legacy)\", or disable that Tuya Local entry first.",
+      "unsupported_local_configuration": "The feeder's local protocol or address is not supported. Only local protocol 3.5 at a private IPv4 address is supported; nothing was saved.",
+      "invalid_local_configuration": "The feeder's local connection details from the account are not valid; nothing was saved.",
       "binding_unavailable": "The tuya_local FreshFeed device registry entry could not be identified; controls were not enabled.",
       "provision_failed": "The retained-intent store could not be created. Nothing was saved; an existing partial store is left untouched for manual recovery.",
       "account_unavailable": "Sign in with PetSafe is not available in this installation. Use \"Use an existing Tuya Local entry\".",
-      "tuya_local_missing": "Tuya Local is not installed. Install Tuya Local release 2026.10.0 exactly from HACS (HACS offers the latest release by default), restart Home Assistant and try again.",
-      "tuya_local_unsupported": "The installed Tuya Local is not release 2026.10.0, or it was updated without a restart. Install release 2026.10.0 exactly from HACS, restart Home Assistant and try again. To keep another Tuya Local version, add the feeder in Tuya Local yourself and choose \"Use an existing Tuya Local entry\".",
-      "profile_conflict": "Tuya Local already has a different petsafe_freshfeed_raw profile. It was not changed. Remove or restore it, then try again.",
-      "profile_install_failed": "The PetSafe FreshFeed profile could not be installed into Tuya Local. No Tuya Local entry was created.",
-      "unexpected_step": "Tuya Local's setup asked for something unexpected and was stopped. No Tuya Local entry was created. The PetSafe FreshFeed device profile may remain installed in Tuya Local, which is harmless.",
-      "connection_failed": "Tuya Local could not connect to the feeder. Check that it is powered and on the same network, then try again. No Tuya Local entry was created. The PetSafe FreshFeed device profile may remain installed in Tuya Local, which is harmless.",
-      "not_supported": "Tuya Local did not offer the PetSafe FreshFeed profile for this device. No Tuya Local entry was created. The PetSafe FreshFeed device profile may remain installed in Tuya Local, which is harmless.",
-      "already_configured_other": "Tuya Local already has an entry for this feeder that cannot be used (for example disabled, ignored, not loaded or another profile). Fix or remove it in Tuya Local first.",
       "already_in_progress": "Another setup for this feeder is in progress. Finish or close it, then try again.",
-      "aborted": "Setup was stopped. No Tuya Local entry was created. The PetSafe FreshFeed device profile may remain installed in Tuya Local, which is harmless.",
-      "tl_entry_kept_not_loaded": "A Tuya Local entry for the feeder was created and kept, but it did not finish loading. Check it in Tuya Local, then finish with \"Use an existing Tuya Local entry\".",
-      "tl_entry_kept_already_configured": "A Tuya Local entry for the feeder was created and kept, but this FreshFeed device is already configured here. Remove the extra Tuya Local entry if you do not need it, or finish with \"Use an existing Tuya Local entry\" after removing the other FreshFeed entry.",
-      "tl_entry_kept_already_in_progress": "A Tuya Local entry for the feeder was created and kept, but another setup for it is in progress. Finish with \"Use an existing Tuya Local entry\".",
-      "tl_entry_kept_binding_unavailable": "A Tuya Local entry for the feeder was created and kept, but its FreshFeed device registry entry could not be identified. Nothing else was saved. Finish with \"Use an existing Tuya Local entry\".",
-      "tl_entry_kept_provision_failed": "A Tuya Local entry for the feeder was created and kept, but the retained-intent store could not be created and nothing else was saved. Finish with \"Use an existing Tuya Local entry\".",
-      "tl_entry_kept_aborted": "A Tuya Local entry for the feeder was created and kept, but setup was stopped. Finish with \"Use an existing Tuya Local entry\"."
+      "aborted": "Setup was stopped. Nothing was saved.",
+      "reconfigure_successful": "The feeder address was updated and the entry was started again.",
+      "reconfigure_unsupported": "Only entries that connect to the feeder directly can change their address here. For a Tuya Local entry, change the address in Tuya Local.",
+      "reconfigure_in_progress": "This entry is already being reconfigured.",
+      "unload_failed": "The entry could not be stopped safely (for example a command is still settling), so nothing was changed. Try again later.",
+      "migration_pending": "This entry has an unfinished migration; finish or cancel it first."
+    },
+    "create_entry": {
+      "owned_read_only": "{name} was added read-only: no commands are sent to the feeder. To enable Feed, Defrost, Refilled and schedule controls, open this entry's Configure options and choose Enable controls. That second step creates the local retained-intent store for this feeder's device."
     }
   },
   "options": {
@@ -110,20 +109,88 @@
         },
         "data_description": {
           "enable_controls": "Creates a local retained-intent store once. Controls stay locked after every restart until you check the feeder and clear any uncertain command."
+        },
+        "menu_options": {
+          "controls": "Enable controls",
+          "migrate": "Connect directly (migrate away from Tuya Local)",
+          "resume": "Continue the migration",
+          "cancel": "Cancel the migration",
+          "remove_source": "Remove the retired Tuya Local entry"
         }
+      },
+      "controls": {
+        "title": "PetSafe FreshFeed controls",
+        "description": "Enable Feed, Defrost, Refilled and schedule controls for this read-only entry.",
+        "data": {
+          "enable_controls": "Enable controls"
+        },
+        "data_description": {
+          "enable_controls": "Creates a local retained-intent store once. Controls stay locked after every restart until you check the feeder and clear any uncertain command."
+        }
+      },
+      "migrate": {
+        "title": "Connect directly to the feeder",
+        "description": "PetSafe FreshFeed will connect to the feeder itself, using the local key already saved in the selected Tuya Local entry, and keep this entry, its device, its entities, its history and its controls store. Step 1 (now): controls stop, the Tuya Local entry is disabled (not deleted) and the feeder is unavailable. Then restart Home Assistant and choose Continue the migration. When the device moves to PetSafe FreshFeed, these {count} Tuya Local entities are removed: {retiring}. Until that move you can cancel; after it the migration only goes forward. No feeder command is sent."
+      },
+      "migrate_host": {
+        "title": "Feeder address for the direct connection",
+        "description": "The Tuya Local entry uses a host name or automatic protocol, which a direct connection does not use. Enter the feeder's local IPv4 address (10.x.x.x, 172.16.x.x to 172.31.x.x, or 192.168.x.x) and its local protocol.",
+        "data": {
+          "host": "IP address",
+          "protocol_version": "Local protocol"
+        }
+      },
+      "resume": {
+        "title": "Continue the migration",
+        "description": "Continues after the restart: one read-only status check confirms the direct connection, then the device moves to PetSafe FreshFeed and the connection is checked again. If the feeder's address changed, enter its new local IPv4 address; otherwise leave it empty. Only if the device already moved and the Tuya Local entry was deleted or changed, also enter the feeder's local key; otherwise leave it empty. No feeder command is sent.",
+        "data": {
+          "host": "IP address (optional)",
+          "local_key": "Local key (optional, forward repair only)"
+        }
+      },
+      "cancel": {
+        "title": "Cancel the migration",
+        "description": "Restores the Tuya Local connection (re-enabling its entry if it was enabled before) and keeps this entry on it. Only possible before the device moved. A new migration can be started later from these options."
+      },
+      "remove_source": {
+        "title": "Remove the retired Tuya Local entry",
+        "description": "The direct connection was verified and has persisted across a restart. This removes only the retired Tuya Local entry for this feeder; the Tuya Local integration itself is not uninstalled. Keep it if another device still uses Tuya Local."
       }
+    },
+    "error": {
+      "invalid_host": "Enter a private IPv4 address (10.x.x.x, 172.16.x.x to 172.31.x.x, or 192.168.x.x).",
+      "unsupported_local_configuration": "Only local protocol 3.5 at a private IPv4 address is supported."
     },
     "abort": {
       "controls_already_enabled": "Controls are already enabled for this entry.",
-      "binding_unavailable": "The tuya_local FreshFeed device registry entry could not be identified; controls were not enabled.",
-      "provision_failed": "The retained-intent store could not be created. Nothing was saved; an existing partial store is left untouched for manual recovery."
+      "binding_unavailable": "The FreshFeed device registry entry could not be identified; controls were not enabled. A new entry must have loaded once before controls can be enabled.",
+      "provision_failed": "The retained-intent store could not be created. Nothing was saved; an existing partial store is left untouched for manual recovery.",
+      "migration_pending": "This entry has an unfinished migration; finish or cancel it first.",
+      "migration_restart_required": "Controls are stopped and the Tuya Local entry is disabled. Restart Home Assistant, then open these options again and choose Continue the migration.",
+      "migration_ready_to_resume": "The migration can continue: open these options again and choose Continue the migration.",
+      "migration_forward_repair_required": "The device already moved to PetSafe FreshFeed, but the direct connection could not be confirmed. Controls stay stopped. Check that the feeder is powered and reachable, then choose Continue the migration again (optionally with its current address).",
+      "migration_complete": "Done. PetSafe FreshFeed now connects directly to the feeder; this entry, its device, its entities, its history and its controls store were kept.",
+      "migration_cancelled": "The migration was cancelled; this entry uses Tuya Local again.",
+      "migration_refused": "Nothing was changed by this step. The migration could not safely continue (for example the old connection is still running, the Tuya Local entry changed, or the feeder did not answer a read-only check). Controls stay stopped while a migration is open.",
+      "migration_already_migrating": "This entry already has a migration.",
+      "migration_ambiguous_source": "The Tuya Local entry or its device could not be identified uniquely (another entry or device names the same feeder), so nothing was changed.",
+      "migration_unsupported_shape": "The Tuya Local entry's connection details are not supported for a direct connection (only a single feeder, local protocol 3.5 and a private IPv4 address), so nothing was changed.",
+      "migration_unsupported_version": "Migration is supported only on Home Assistant 2026.10; nothing was changed.",
+      "migration_storage_unavailable": "The migration record or the controls store could not be read safely, so nothing was changed.",
+      "migration_operation_active": "A command is still settling; try again once it has finished."
     }
   },
   "entity": {
     "sensor": {
-      "history": {"name": "History"},
-      "quick_feed": {"name": "Quick feed"},
-      "write_status": {"name": "Write status"},
+      "history": {
+        "name": "History"
+      },
+      "quick_feed": {
+        "name": "Quick feed"
+      },
+      "write_status": {
+        "name": "Write status"
+      },
       "schedule": {
         "name": "Schedule"
       },

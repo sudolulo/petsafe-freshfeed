@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .const import DOMAIN, PLATFORMS
+from .const import CONF_MIGRATION_STAGED_CONNECTION, DOMAIN, PLATFORMS, TRANSITIONS_KEY
 
 # hass.data[DOMAIN] key: hubs whose failed-setup shutdown has not drained yet.
 _RETIRING = "retiring"
@@ -27,7 +27,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """
     from homeassistant.exceptions import ConfigEntryNotReady
 
+    from . import hub as hub_module
     from .hub import FreshFeedHub
+    from .migration import in_migration
+
+    # Migration admission precedes any hub or source construction: a migration
+    # call in progress, or an unfinished journal, fences startup. Existing
+    # entity registry rows remain (states unavailable) meanwhile.
+    if in_migration(hass, entry) or not await hub_module.async_migration_admits(hass, entry):
+        raise ConfigEntryNotReady(hub_module.MIGRATION_PENDING)
 
     # A hub whose failed-setup shutdown could not drain still owns its parked
     # coordinator: no replacement starts until that drain succeeds.
@@ -41,7 +49,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hub = FreshFeedHub(hass, entry)
     entry.runtime_data = hub
     try:
-        await hub.async_start()
+        # Admission was decided above for this setup: not re-derived by the hub.
+        await hub.async_start(migration_admitted=True)
         await hass.config_entries.async_forward_entry_setups(entry, list(PLATFORMS))
     except BaseException:
         # Retained until a successful drain, including if this cleanup is cancelled.
@@ -57,17 +66,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    # An explicit transition (host reconfigure) unloads and sets up the entry
+    # exactly once itself: never a second, listener-driven reload.
+    if entry.entry_id in hass.data.get(DOMAIN, {}).get(TRANSITIONS_KEY, ()):
+        return
+    # An open migration (staged connection) reloads only when its coordinator
+    # requests it after committing owned fields; never from this listener.
+    if CONF_MIGRATION_STAGED_CONNECTION in entry.data:
+        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Remove the persisted event history when the entry is deleted.
+    """Remove the persisted event history and migration journal of a deleted entry.
 
     The retained-intent store is deliberately left in place: it is never cleared.
+    A journal that cannot be removed safely is left behind (it is keyed by this
+    entry's unique ID, so no later entry can adopt it).
     """
     from homeassistant.helpers.storage import Store
 
+    from .migration_journal import MigrationJournal
+    from .migration_state import MigrationFault
+
     await Store(hass, 1, f"{DOMAIN}.{entry.entry_id}").async_remove()
+    try:
+        await MigrationJournal(hass.config.config_dir, entry.entry_id).async_remove()
+    except MigrationFault:
+        pass
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

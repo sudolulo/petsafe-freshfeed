@@ -11,6 +11,14 @@ the coordinator out of service synchronously, then quiesces the adapter, then
 fences transport before witness via ``LifecycleFence``, and only after a
 successful drain detaches the bridge. A failed drain keeps the retired group
 parked (bridge attached, barrier and witness untouched) for a later retry.
+
+Backend selection is explicit: ``connection_backend`` ``owned`` runs the
+PetSafe-owned source (no Tuya Local entry, raw entity, wrapper or raw-state
+listener is used); a missing field means the legacy borrowed source. The
+owned path observes the source's actual reports directly: RAW_DPS values are
+mapped to the HA-style strings the pure codecs expect, the first report of
+each connection epoch only seeds values, and disconnected values are
+unavailable rather than last-known.
 """
 from __future__ import annotations
 
@@ -27,7 +35,10 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    CONF_INTENT_BINDING_ID, CONF_INTENT_STORE_ID, CONF_SOURCE_ENTRY_ID, DOMAIN,
+    BACKEND_LEGACY, BACKEND_OWNED, CONF_CONNECTION_BACKEND, CONF_DEVICE_ID, CONF_HOST,
+    CONF_INTENT_BINDING_ID, CONF_INTENT_STORE_ID, CONF_LOCAL_KEY, CONF_MIGRATED_FROM,
+    CONF_PROTOCOL_VERSION, CONF_REGISTRY_DEVICE_ID,
+    CONF_SOURCE_ENTRY_ID, DOMAIN, SOURCE_DOMAIN,
     COORDINATOR_READY_TIMEOUT, INTENT_STORE_ROOT, LIFECYCLE_TIMEOUT,
 )
 from . import observed
@@ -37,19 +48,59 @@ from .schedule_codec import next_occurrence
 from .store_bootstrap import open_store
 from .tuya_bridge import async_attach
 from .tuya_compat import FAILURE
+from .owned_source import FAILURE as OWNED_FAILURE, LocalConnection, OwnedSource
 from .write_adapter import async_create_adapter
 from .services import acknowledgement, recovery_allowed
 from .quick_feed import decode_quick_feed
+from .source_lookup import owned_leaf_valid
 
 _DP_RE = re.compile(r"(?:^|_)dp_(\d+)_raw$")
 
+# Fixed setup-refusal codes (never a configured value).
+MIGRATION_PENDING = "migration_pending"
+UNSUPPORTED_BACKEND = "unsupported_backend"
+SOURCE_CONFLICT = "source_conflict"
+LEAF_INVALID = "registry_leaf_invalid"
+
+
+async def async_migration_admits(hass, entry) -> bool:
+    """A migration-marked entry starts only over an admitted VERIFIED journal.
+
+    Checked before any source is constructed. A ``migrated_from`` marker (or a
+    staged connection) with a missing, unreadable or unfinished journal fences
+    startup, as does any unfinished journal of an unmarked entry: never
+    virgin-entry inference. See ``migration.async_startup_admits``.
+    """
+    from .migration import async_startup_admits
+    return await async_startup_admits(hass, entry)
+
+
+def _ha_state(value):
+    """Owned DP value -> the HA-style state string the pure codecs expect."""
+    if type(value) is bool:
+        return "on" if value else "off"
+    if type(value) is int:
+        return str(value)
+    if type(value) is str:
+        return value
+    return None
+
 
 class FreshFeedHub:
-    """Observe registry-bound raw states and persist locally observed events."""
+    """Observe the feeder (owned reports or legacy raw states) and persist events."""
+
+    # Seconds between owned admission attempts after a failed start.
+    OWNED_RETRY = 30.0
 
     def __init__(self, hass, entry):
         self.hass = hass
         self.entry = entry
+        self._backend = entry.data.get(CONF_CONNECTION_BACKEND, BACKEND_LEGACY)
+        self._owned = self._backend == BACKEND_OWNED
+        self._connection = None
+        # Owned path: RAW_DPS -> HA-style value observed in the current epoch.
+        self._observed = {}
+        self._owned_retry_at = 0.0
         self.raw_entity_ids = {}
         self.device_identifiers = set()
         self.device_id = None
@@ -89,7 +140,17 @@ class FreshFeedHub:
         self._unsubscribers = []
         self._store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}")
 
-    async def async_start(self):
+    async def async_start(self, *, migration_admitted=False):
+        # Journal validation precedes every source construction. Setup passes
+        # the admission it already decided; any other caller is checked here.
+        if migration_admitted is not True and not await async_migration_admits(
+                self.hass, self.entry):
+            raise ConfigEntryNotReady(MIGRATION_PENDING)
+        if self._backend == BACKEND_OWNED:
+            await self._async_start_owned()
+            return
+        if self._backend != BACKEND_LEGACY:
+            raise ConfigEntryNotReady(UNSUPPORTED_BACKEND)
         registry = er.async_get(self.hass)
         source = self.entry.data[CONF_SOURCE_ENTRY_ID]
         for entity in er.async_entries_for_config_entry(registry, source):
@@ -110,18 +171,7 @@ class FreshFeedHub:
                                if registry.async_get(entity_id).device_id == device.id}
         if not all(dp in self.raw_entity_ids for dp in observed.REQUIRED_DPS):
             raise ConfigEntryNotReady("Required FreshFeed raw entities are on another device")
-        stored = await self._store.async_load()
-        self._store_loaded = True
-        if isinstance(stored, dict):
-            self.schedule = ScheduleState.from_dict(stored.get("schedule"))
-            stored = stored.get("events")
-        if isinstance(stored, list):
-            self.events = [event for item in stored
-                           if (event := observed.FeedEvent.from_dict(item)) is not None]
-        fed = observed.last_of(self.events, {"dispensed"})
-        if fed:
-            self.restore_last_fed(fed.at)
-        self._prune_history(dt_util.utcnow())
+        await self._async_load_store()
         self._refresh_states()
         self._state_unsubscribe = async_track_state_change_event(
             self.hass, list(self.raw_entity_ids.values()), self._state_changed)
@@ -144,6 +194,177 @@ class FreshFeedHub:
                     self._attach_task = self.hass.async_create_task(self._async_attach_bridge(notify=True))
             self._unsubscribers.append(source_entry.async_on_state_change(source_changed))
         await self._async_attach_bridge()
+
+    async def _async_load_store(self):
+        stored = await self._store.async_load()
+        self._store_loaded = True
+        if isinstance(stored, dict):
+            self.schedule = ScheduleState.from_dict(stored.get("schedule"))
+            stored = stored.get("events")
+        if isinstance(stored, list):
+            self.events = [event for item in stored
+                           if (event := observed.FeedEvent.from_dict(item)) is not None]
+        fed = observed.last_of(self.events, {"dispensed"})
+        if fed:
+            self.restore_last_fed(fed.at)
+        self._prune_history(dt_util.utcnow())
+
+    # ----- owned backend -----------------------------------------------------
+
+    async def _async_start_owned(self):
+        """Owned setup: conflict, connection and leaf checks, then one source.
+
+        Never discovers raw entities, listens to a source entry or the entity
+        registry, or touches a Tuya Local wrapper. ``source_entry_id`` is only
+        migration provenance here, consulted for conflicts.
+        """
+        data = self.entry.data
+        if self._source_conflict():
+            raise ConfigEntryNotReady(SOURCE_CONFLICT)
+        try:
+            self._connection = LocalConnection(
+                data.get(CONF_DEVICE_ID), data.get(CONF_HOST), data.get(CONF_LOCAL_KEY),
+                data.get(CONF_PROTOCOL_VERSION))
+        except ValueError as error:
+            code = str(error)  # fixed LocalConnectionError code, never a value
+        else:
+            code = None
+        if code is not None:
+            raise ConfigEntryNotReady(code)
+        device = self._resolve_owned_leaf()
+        if device is None:
+            raise ConfigEntryNotReady(LEAF_INVALID)
+        # Assigned before platforms forward: entities use this explicit leaf.
+        self.device_identifiers = set(device.identifiers)
+        self.device_id = device.id
+        await self._async_load_store()
+        self._refresh_states()
+        self._unsubscribers = [
+            async_track_time_interval(self.hass, self._tick, timedelta(seconds=60)),
+            async_track_time_interval(self.hass, self._check_bridge, timedelta(seconds=1)),
+        ]
+        provenance = data.get(CONF_SOURCE_ENTRY_ID)
+        watched = (self.hass.config_entries.async_get_entry(provenance)
+                   if type(provenance) is str else None)
+        if watched is not None:
+            # A retired source that starts again is an ownership conflict.
+            self._unsubscribers.append(watched.async_on_state_change(self._fence_conflict))
+        await self._async_attach_owned()
+
+    @callback
+    def _fence_conflict(self):
+        """Fence and stop the owned source while a conflicting Tuya Local entry is enabled.
+
+        Best effort inside HA only: this cannot stop another integration's own
+        connection, so it is not a universal cross-integration lock.
+        """
+        if self._binding_valid and not self._stopped and self._source_conflict():
+            self._controls_reason = SOURCE_CONFLICT
+            self.hass.async_create_task(self._source_unloaded(invalidate=True), eager_start=True)
+
+    def _source_conflict(self) -> bool:
+        """An enabled Tuya Local entry for this feeder (or the provenance source)."""
+        physical = self.entry.data.get(CONF_DEVICE_ID)
+        provenance = self.entry.data.get(CONF_SOURCE_ENTRY_ID)
+        for other in self.hass.config_entries.async_entries(
+                SOURCE_DOMAIN, include_ignore=False, include_disabled=False):
+            if (other.entry_id == provenance or other.data.get("device_id") == physical
+                    or other.options.get("device_id") == physical):
+                return True
+        return False
+
+    def _resolve_owned_leaf(self):
+        """The single PetSafe-owned leaf; never a second leaf, never another owner's."""
+        registry = dr.async_get(self.hass)
+        data, entry_id = self.entry.data, self.entry.entry_id
+        if CONF_REGISTRY_DEVICE_ID in data:
+            persisted = data[CONF_REGISTRY_DEVICE_ID]
+            device = registry.async_get(persisted) if type(persisted) is str else None
+            if device is None or device.id != persisted:
+                return None
+        elif CONF_MIGRATED_FROM in data:
+            return None  # a migrated entry reuses its persisted leaf only
+        else:
+            devices = dr.async_entries_for_config_entry(registry, entry_id)
+            if len(devices) > 1:
+                return None
+            device = devices[0] if devices else registry.async_get_or_create(
+                config_entry_id=entry_id, identifiers={(DOMAIN, self._connection.device_id)},
+                manufacturer="PetSafe", model="FreshFeed",
+                name=self.entry.title or "PetSafe FreshFeed")
+        return device if self._owned_leaf_valid(device) else None
+
+    def _owned_leaf_valid(self, device) -> bool:
+        return owned_leaf_valid(device, self.entry.entry_id, self._connection.device_id)
+
+    async def _async_attach_owned(self, *, notify=False):
+        """Start one owned source; a failed start retries after OWNED_RETRY."""
+        generation = self._binding_generation
+        async with self._drain_lock:
+            if (self._parked or generation != self._binding_generation or self._stopped
+                    or not self._binding_valid or self.bridge is not None):
+                return
+            source = OwnedSource(self.hass, self._connection)
+            self.bridge = source
+            # Subscribed before start: the admission status report is the first
+            # actual observation (it seeds values; it never classifies).
+            self._bridge_unsubscribe = source.subscribe(self._device_report, self._connection_changed)
+        try:
+            await source.async_start()
+        except ValueError:
+            self._owned_retry_at = self.hass.loop.time() + self.OWNED_RETRY
+            if self.bridge is source:
+                if self._bridge_unsubscribe is not None:
+                    self._bridge_unsubscribe()
+                    self._bridge_unsubscribe = None
+                self.bridge = None
+                self._observed.clear()
+                self._refresh_states()
+            if generation == self._binding_generation:
+                self.schedule = ScheduleState(self.schedule.entries, self.schedule.observed_at,
+                                              self.schedule.disconnected().source_state, OWNED_FAILURE)
+                if notify:
+                    self._notify()
+            return
+        if generation != self._binding_generation or self.bridge is not source:
+            return  # retired while starting: its parked group stops it
+        if self.schedule.error == OWNED_FAILURE:
+            self.schedule = ScheduleState(self.schedule.entries, self.schedule.observed_at,
+                                          self.schedule.source_state, None)
+        self._notify()
+        self._start_coordinator(source, generation)
+
+    @callback
+    def _check_owned(self):
+        """Periodic owned check: current-state, controls retry, drain, reattach."""
+        self._fence_conflict()
+        bridge = self.bridge
+        available = self.snapshot.available
+        self._refresh_states()
+        if self.snapshot.available != available:
+            self._notify()
+        if (self.adapter is None and bridge is not None
+                and self._controls_reason == "source_incompatible"
+                and self._binding_valid and not self._stopped and self._is_current(bridge)
+                and (self._coordinator_task is None or self._coordinator_task.done())):
+            self._start_coordinator(bridge, self._binding_generation)
+        elif (self._parked and not self._stopped and not self._drain_lock.locked()
+              and (self._retry_task is None or self._retry_task.done())):
+            self._retry_task = self.hass.async_create_task(
+                self._async_retry_drain(), eager_start=True)
+        elif (bridge is None and not self._parked and not self._stopped and self._binding_valid
+              and (self._attach_task is None or self._attach_task.done())
+              and (self._retry_task is None or self._retry_task.done())
+              and self.hass.loop.time() >= self._owned_retry_at):
+            self._attach_task = self.hass.async_create_task(
+                self._async_attach_owned(notify=True), eager_start=True)
+
+    @staticmethod
+    def _is_current(bridge) -> bool:
+        try:
+            return bridge is not None and bridge.is_current() is True
+        except Exception:  # noqa: BLE001 - unknown shape is not current
+            return False
 
     async def _async_attach_bridge(self, *, notify=False):
         source_entry, device = self._source_entry, self._device
@@ -306,6 +527,10 @@ class FreshFeedHub:
         # Epochs are local to each bridge, so a replacement may reuse one.
         self._report_values.clear()
         self._report_epoch = None
+        if self._owned:
+            # A retired owned source's values are not current observations.
+            self._observed.clear()
+            self._refresh_states()
         if self._bridge_unsubscribe is not None:
             self._bridge_unsubscribe()
             self._bridge_unsubscribe = None
@@ -354,8 +579,11 @@ class FreshFeedHub:
                     return False
                 if bridge is not None:
                     # Only after a successful drain: detach waits for the shared
-                    # API lock and restores upstream receive ownership.
-                    await bridge.async_detach()
+                    # API lock and restores upstream receive ownership. A
+                    # refused detach keeps the parked group: never pop a live
+                    # source.
+                    if await bridge.async_detach() is False:
+                        return False
                 self._parked.pop(0)
             return True
 
@@ -442,6 +670,10 @@ class FreshFeedHub:
         if report.epoch != self._report_epoch:
             self._report_epoch = report.epoch
             self._report_values.clear()
+            # A new epoch's first values only seed; never compared across epochs.
+            self._observed.clear()
+        if self._owned:
+            self._observe_report(report)
         for dp in (14, 150):
             if str(dp) in report.dps:
                 value = report.dps[str(dp)]
@@ -451,6 +683,8 @@ class FreshFeedHub:
                 if event:
                     self._record_event(event)
         if '140' in report.dps:
+            if self._owned:
+                self._observed[140] = _ha_state(report.dps['140'])
             self.quick_feed = decode_quick_feed(report.dps['140'])
             self._notify()
         if "1" in report.dps:
@@ -459,12 +693,41 @@ class FreshFeedHub:
                 self.schedule = self.schedule.disconnected()
             self._store.async_delay_save(self._serialize, 10)
             self._notify()
+        if self._owned:
+            self._notify()
+
+    def _observe_report(self, report):
+        """Owned: direct RAW_DPS observation from one actual report.
+
+        The state classifier sees old/new values of the same epoch only, at
+        the report's own timestamp; DP14/150 report events stay with the
+        report classifier in ``_device_report`` (each records exactly once).
+        """
+        if self.last_report is None or report.at > self.last_report:
+            self.last_report = report.at
+        events = []
+        for dp in observed.RAW_DPS:
+            key = str(dp)
+            if key not in report.dps:
+                continue
+            old, new = self._observed.get(dp), _ha_state(report.dps[key])
+            self._observed[dp] = new
+            if (feed := observed.classify(dp, old, new, at=report.at)) is not None:
+                events.append(feed)
+        self._refresh_states()
+        for feed in events:
+            self._record_event(feed)
 
     @callback
     def _connection_changed(self, epoch, connected):
         self.quick_feed = decode_quick_feed(None)
         self._report_values.clear()
         self._report_epoch = None
+        if self._owned:
+            self._observed.clear()
+            self._refresh_states()
+            if connected:
+                self._notify()
         if not connected:
             self.schedule = self.schedule.disconnected()
             self._store.async_delay_save(self._serialize, 10)
@@ -479,6 +742,12 @@ class FreshFeedHub:
                 "schedule": self.schedule.to_dict()}
 
     def _refresh_states(self):
+        if self._owned:
+            # Owned: current-epoch values of a current source only; freshness
+            # (last_report) moves only with actual reports.
+            current = self._is_current(self.bridge)
+            self.snapshot = observed.snapshot(dict(self._observed) if current else {})
+            return
         states = {dp: self.hass.states.get(entity_id) for dp, entity_id in self.raw_entity_ids.items()}
         self.snapshot = observed.snapshot({dp: state.state if state else None for dp, state in states.items()})
         self.last_report = max((state.last_reported for state in states.values() if state), default=None)
@@ -508,6 +777,9 @@ class FreshFeedHub:
 
     @callback
     def _check_bridge(self, now):
+        if self._owned:
+            self._check_owned()
+            return
         bridge = self.bridge
         if bridge is not None and bridge.wrapper._api is not bridge.api:
             self.schedule = self.schedule.disconnected()
@@ -547,7 +819,11 @@ class FreshFeedHub:
         """Drain parked groups; then restore observation/controls for the live source."""
         if not await self._async_drain() or self._stopped or not self._binding_valid:
             return
-        if self.bridge is None:
+        if self.bridge is None and self._owned:
+            if self._attach_task is None or self._attach_task.done():
+                self._attach_task = self.hass.async_create_task(
+                    self._async_attach_owned(notify=True), eager_start=True)
+        elif self.bridge is None:
             source = self._source_entry
             if (source is not None and source.state is ConfigEntryState.LOADED
                     and (self._attach_task is None or self._attach_task.done())):

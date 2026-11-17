@@ -20,9 +20,18 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'tools/build-hacs.py'
 COMPONENT = 'custom_components/petsafe_freshfeed/'
 RUNTIME = '''__init__.py binary_sensor.py config_flow.py const.py critical_transport.py entity.py event.py hub.py lifecycle.py observed.py quick_feed.py schedule_codec.py schedule_state.py sensor.py services.py source_binding.py sqlite_witness.py store_bootstrap.py tuya_bridge.py tuya_compat.py write_adapter.py manifest.json strings.json services.yaml tuya_fingerprints.json translations/en.json'''.split()
-ACCOUNT_ASSIST = '''account/__init__.py account/boundary.py account/client.py account/profile.py account/exchange.py account/protocol_contract.json lan_locate.py tuya_local_assist.py source_lookup.py profile/petsafe_freshfeed_raw.yaml'''.split()
-RUNTIME = RUNTIME + ACCOUNT_ASSIST
-COMPONENT_PROFILE = COMPONENT + 'profile/petsafe_freshfeed_raw.yaml'
+ACCOUNT = '''account/__init__.py account/boundary.py account/client.py account/profile.py account/exchange.py account/protocol_contract.json lan_locate.py source_lookup.py'''.split()
+# Standalone onboarding no longer drives Tuya Local: its setup assist and the
+# component profile copy it installed were removed from the source tree and
+# are not shipped (the manual-install profile export stays for legacy users).
+NOT_SHIPPED = '''tuya_local_assist.py profile/petsafe_freshfeed_raw.yaml'''.split()
+# Neutral source contract and the PetSafe-owned TinyTuya source (standalone).
+OWNED_SOURCE = '''local_source.py owned_source.py owned_compat.py owned_fingerprints.json'''.split()
+# Durable migration journal and pure recovery reducer.
+MIGRATION = '''migration_state.py migration_journal.py migration.py'''.split()
+# Owned-backend setting entity platforms (stainless inserts, meal counter, brightness).
+SETTINGS = '''switch.py number.py owned_setting.py'''.split()
+RUNTIME = RUNTIME + ACCOUNT + OWNED_SOURCE + MIGRATION + SETTINGS
 APP_PROFILE = COMPONENT + 'account/app_profile.json'
 APP_PROFILE_DEST = 'petsafe-freshfeed/' + APP_PROFILE
 PROFILE_FILE = 'public-apk-profile.private.json'
@@ -152,6 +161,55 @@ class DistributionTest(unittest.TestCase):
         ):
             self.assertIn(required, readme, f'readme missing: {required}')
 
+    def test_release_draft_040_metadata(self):
+        """Integration draft 0.4.0; HACS minimum HA 2026.10.0; npm/card versions unchanged."""
+        out = self.good_build()
+        integration = out / 'petsafe-freshfeed'
+        hacs = json.loads((integration / 'hacs.json').read_text())
+        self.assertEqual(hacs['homeassistant'], '2026.10.0')
+        self.assertEqual(hacs['name'], 'PetSafe FreshFeed')
+        self.assertFalse(hacs.get('content_in_root', False))
+        manifest = json.loads((integration / COMPONENT / 'manifest.json').read_text())
+        self.assertEqual(manifest['version'], '0.4.0')
+        self.assertEqual(manifest['after_dependencies'], ['tuya_local'])
+        self.assertNotIn('dependencies', manifest)
+        self.assertEqual(manifest['requirements'], ['tinytuya==1.20.0'])
+        package = json.loads((ROOT / 'package.json').read_text())
+        self.assertEqual(package['version'], '0.3.0')
+        self.assertIn('**0.3.0**', (ROOT / 'distribution/README-card.md').read_text())
+        changelog = (ROOT / 'CHANGELOG.md').read_text()
+        self.assertIn('## Integration [0.4.0]', changelog)
+        self.assertLess(changelog.index('## Integration [0.4.0]'),
+                        changelog.index('## Integration [0.3.0]'))
+
+    def test_readmes_document_standalone_and_migration(self):
+        built = (self.good_build() / 'petsafe-freshfeed/README.md').read_text()
+        root = (ROOT / 'README.md').read_text()
+        for name, text in (('distribution', built), ('root', root)):
+            readme = ' '.join(text.split())  # wrapped prose: compare whitespace-normalized
+            for required in (
+                '0.4.0',
+                'tinytuya==1.20.0',
+                'Tuya Local is not required',
+                'owned_source_incompatible',
+                '2026.10.0',
+                '2026.10.x',
+                'Legacy entries',
+                'raw entities',
+                'restart',
+                'backup',
+                'local key',
+                'Connect directly (migrate away from Tuya Local)',
+                'Continue the migration',
+                'Cancel the migration',
+                'forward-only',
+                'Remove the retired Tuya Local entry',
+                'not uninstalled',
+                'protocol 3.5',
+            ):
+                self.assertIn(required, readme, f'{name} readme missing: {required}')
+            self.assertNotIn('Tuya Local 2026.10.0 remains a required separately installed dependency', readme)
+
     def test_existing_output_and_stale_extras_are_never_overwritten(self):
         out = self.base / 'stale'
         (out / 'pet-feeder-card').mkdir(parents=True)
@@ -198,7 +256,8 @@ class DistributionTest(unittest.TestCase):
         card = out / 'pet-feeder-card'
         manifest = json.loads((integration / COMPONENT / 'manifest.json').read_text())
         self.assertEqual(manifest['domain'], 'petsafe_freshfeed')
-        self.assertEqual(manifest['version'], '0.3.0')
+        self.assertEqual(manifest['version'], '0.4.0')
+        self.assertNotIn('tuya_local', manifest.get('dependencies', []))
         self.assertEqual(manifest['codeowners'], ['@sudolulo'])
         self.assertEqual(manifest['issue_tracker'], 'https://github.com/sudolulo/petsafe-freshfeed/issues')
         self.assertEqual(manifest['after_dependencies'], ['tuya_local'])
@@ -217,21 +276,56 @@ class DistributionTest(unittest.TestCase):
                 self.assertTrue(dependency.startswith('./'), dependency)
                 self.assertTrue((js.parent / dependency.split('?')[0]).is_file(), dependency)
 
-    def test_runtime_includes_account_assist_and_profile_copy(self):
+    def test_runtime_python_import_closure(self):
+        """Every intra-package import of a shipped module is itself shipped."""
+        import ast
+        shipped = set(exporter.RUNTIME)
+        for name in shipped:
+            if not name.endswith('.py'):
+                continue
+            path = ROOT / COMPONENT / name
+            package = Path(name).parent.parts
+            for node in ast.walk(ast.parse(path.read_text(), str(path))):
+                if not isinstance(node, ast.ImportFrom) or node.level == 0:
+                    continue
+                base = list(package[:len(package) - (node.level - 1)] if node.level > 1 else package)
+                parts = base + (node.module.split('.') if node.module else [])
+                targets = ['/'.join(parts) + '.py', '/'.join(parts + ['__init__.py'])]
+                if node.module is None:
+                    targets = ['/'.join(parts + [alias.name]) + '.py' for alias in node.names]
+                self.assertTrue(any(target.lstrip('/') in shipped for target in targets), (name, targets))
+
+    def test_owned_source_runtime_and_requirement(self):
+        for name in OWNED_SOURCE:
+            self.assertIn(name, exporter.RUNTIME)
+        manifest = json.loads((ROOT / COMPONENT / 'manifest.json').read_text())
+        self.assertEqual(manifest['requirements'], ['tinytuya==1.20.0'])
+        files = contents(self.good_build())
+        for name in OWNED_SOURCE:
+            self.assertEqual(files['petsafe-freshfeed/' + COMPONENT + name], (ROOT / COMPONENT / name).read_bytes(), name)
+
+    def test_runtime_includes_account_modules_and_profile_export(self):
         self.assertEqual(exporter.RUNTIME, RUNTIME)
-        for name in ACCOUNT_ASSIST:
+        for name in ACCOUNT:
             self.assertIn(name, exporter.RUNTIME)
         self.assertNotIn('account/app_profile.json', exporter.RUNTIME)
         files = contents(self.good_build())
-        for name in ACCOUNT_ASSIST:
+        for name in ACCOUNT:
             self.assertEqual(files['petsafe-freshfeed/' + COMPONENT + name], (ROOT / COMPONENT / name).read_bytes(), name)
         self.assertIn(PROFILE_DEST, files)  # manual-install export kept
 
-    def test_profile_copy_matches_source_bytes(self):
-        self.assertEqual((ROOT / COMPONENT_PROFILE).read_bytes(), (ROOT / PROFILE_SRC).read_bytes())
+    def test_tuya_local_assist_not_shipped(self):
+        for name in NOT_SHIPPED:
+            self.assertNotIn(name, exporter.RUNTIME)
         files = contents(self.good_build())
-        self.assertEqual(files['petsafe-freshfeed/' + COMPONENT_PROFILE], (ROOT / PROFILE_SRC).read_bytes())
-        self.assertEqual(files['petsafe-freshfeed/' + COMPONENT_PROFILE], files[PROFILE_DEST])
+        for name in NOT_SHIPPED:
+            self.assertNotIn('petsafe-freshfeed/' + COMPONENT + name, files)
+        self.assertNotIn('tuya_local_assist', (ROOT / COMPONENT / 'config_flow.py').read_text())
+        for name in NOT_SHIPPED:
+            self.assertFalse((ROOT / COMPONENT / name).exists(), name)
+        self.assertFalse((ROOT / 'test_ha/test_tuya_local_assist.py').exists())
+        self.assertTrue((ROOT / PROFILE_SRC).is_file())
+        self.assertEqual(files[PROFILE_DEST], (ROOT / PROFILE_SRC).read_bytes())
 
     def test_build_bundles_profile_from_dir(self):
         out = self.base / 'with-profile'

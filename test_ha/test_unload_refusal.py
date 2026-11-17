@@ -48,3 +48,31 @@ async def test_drain_refusal_does_not_overlap_and_retries(pinned, monkeypatch):
     await until(lambda: hub.adapter is not None and hub.adapter is not old_adapter)
     assert not hub._parked and not ctx.writes
     assert await hub.async_stop()
+
+
+async def test_detach_refusal_keeps_parked_source_and_retries(pinned, monkeypatch):
+    ctx = pinned
+    store_id = await _provision(ctx)
+    entry = await _setup(ctx, _ids(store_id, ctx.leaf))
+    hub = entry.runtime_data
+    await _current(hub)
+    old_adapter, old_bridge = hub.adapter, hub.bridge
+    real_detach = old_bridge.async_detach
+    allow = asyncio.Event()
+    attempts = []
+
+    async def refuse_until_released():
+        attempts.append(True)
+        if not allow.is_set():
+            return False
+        return await real_detach()
+
+    monkeypatch.setattr(old_bridge, "async_detach", refuse_until_released)
+    assert not await ctx.hass.config_entries.async_unload(entry.entry_id)
+    await asyncio.sleep(0.1)
+    assert attempts and hub._parked and hub._parked[0][0] is old_bridge
+    assert not ctx.writes
+    allow.set()
+    await until(lambda: hub.adapter is not None and hub.adapter is not old_adapter)
+    assert not hub._parked and not ctx.writes
+    assert await hub.async_stop()

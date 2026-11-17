@@ -1,4 +1,5 @@
 {
   "name": "PetSafe FreshFeed",
-  "content_in_root": false
+  "content_in_root": false,
+  "homeassistant": "2026.10.0"
 }
