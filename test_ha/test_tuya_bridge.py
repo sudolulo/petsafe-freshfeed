@@ -117,15 +117,24 @@ def test_allowlisted_files_and_bound_methods(tmp_path, monkeypatch):
 
 
 def _import_pinned(monkeypatch):
-    """Import the pinned public tuya_local/TinyTuya layout, or skip if absent."""
+    """Import the pinned public tuya_local/TinyTuya layout, or skip if absent.
+
+    PETSAFE_PINNED_TUYA_LOCAL names the pinned custom_components/tuya_local
+    directory; PETSAFE_PINNED_TINYTUYA_SITE names a site-packages directory
+    holding the pinned tinytuya package. Either unset skips the test.
+    """
     import importlib
+    import os
     import sys
     from pathlib import Path
     from types import ModuleType
 
-    root = Path('~/.local/share/petsafe-validation')
-    source = root / 'local-validation-snapshot/tuya-local/custom_components/tuya_local'
-    site = root / 'venv/lib/python3.13/site-packages'
+    source_env = os.environ.get('PETSAFE_PINNED_TUYA_LOCAL', '')
+    site_env = os.environ.get('PETSAFE_PINNED_TINYTUYA_SITE', '')
+    if not source_env or not site_env:
+        pytest.skip('pinned public source layout is not configured')
+    source = Path(source_env)
+    site = Path(site_env)
     if not source.is_dir() or not (site / 'tinytuya').is_dir():
         pytest.skip('pinned public source layout is not installed')
     monkeypatch.syspath_prepend(str(site))

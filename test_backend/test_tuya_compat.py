@@ -8,6 +8,7 @@ import hashlib
 import inspect
 import json
 import logging
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -18,6 +19,12 @@ from unittest import mock
 import asyncio
 
 from custom_components.petsafe_freshfeed import tuya_compat as compat
+
+# Pinned public Tuya Local source, named by the PETSAFE_PINNED_TUYA_LOCAL
+# environment variable (path to its custom_components/tuya_local directory;
+# never committed or shipped). The check that needs it skips when it is unset
+# or missing.
+PINNED_TL = os.environ.get('PETSAFE_PINNED_TUYA_LOCAL', '')
 
 _WRAPPER_SOURCE = '''\
 import logging
@@ -197,9 +204,10 @@ class ExecutableProvenance(SyntheticSource):
 
 class PinnedWrapperAcceptance(SyntheticSource):
     def test_public_pinned_wrapper_compiled_without_importing_dependencies(self):
-        path = Path('~/.local/share/petsafe-validation/local-validation-snapshot/tuya-local/custom_components/tuya_local/device.py')
-        if not path.is_file():
-            self.skipTest('public pinned research source unavailable')
+        path = Path(PINNED_TL, 'device.py') if PINNED_TL else None
+        if path is None or not path.is_file():
+            self.skipTest('PETSAFE_PINNED_TUYA_LOCAL is unset or has no device.py: '
+                          'pinned public source check skipped')
         source = path.read_bytes()
         pinned = json.JSONDecoder().decode(Path(compat.__file__).with_name('tuya_fingerprints.json').read_text())
         suffix = 'custom_components/tuya_local/device.py'

@@ -11,14 +11,93 @@
         "data_description": {
           "source_entry_id": "The tuya_local entry that uses the petsafe_freshfeed_raw profile.",
           "enable_controls": "Creates a local retained-intent store once. Controls stay locked after every restart until you check the feeder and clear any uncertain command."
+        },
+        "menu_options": {
+          "account": "Sign in with PetSafe",
+          "existing": "Use an existing Tuya Local entry"
+        }
+      },
+      "existing": {
+        "title": "Use an existing Tuya Local entry",
+        "description": "Observe {title} through its tuya_local raw entities. Without controls no commands are sent to the feeder.",
+        "data": {
+          "source_entry_id": "tuya_local FreshFeed device",
+          "enable_controls": "Enable controls"
+        },
+        "data_description": {
+          "source_entry_id": "The tuya_local entry that uses the petsafe_freshfeed_raw profile.",
+          "enable_controls": "Creates a local retained-intent store once. Controls stay locked after every restart until you check the feeder and clear any uncertain command."
+        }
+      },
+      "account": {
+        "title": "Sign in with PetSafe",
+        "description": "Sign in with your PetSafe app email and password to find your feeder. The password is used for this one sign-in and is never stored. After each attempt wait 60 seconds before trying again.",
+        "data": {
+          "country": "Region",
+          "email": "Email",
+          "password": "Password"
+        },
+        "data_description": {
+          "country": "The region your PetSafe app account was created in."
+        }
+      },
+      "feeder": {
+        "title": "Choose your feeder",
+        "description": "Your account has more than one FreshFeed feeder. Choose the one to add.",
+        "data": {
+          "feeder": "Feeder"
+        }
+      },
+      "host": {
+        "title": "Feeder address",
+        "description": "The feeder did not answer on the local network. Enter its local IPv4 address (10.x.x.x, 172.16.x.x to 172.31.x.x, or 192.168.x.x), for example from your router's client list.",
+        "data": {
+          "host": "IP address"
+        }
+      },
+      "confirm": {
+        "title": "Add {name}",
+        "description": "{setup} {profile} Without controls no commands are sent to the feeder.",
+        "data": {
+          "enable_controls": "Enable controls"
+        },
+        "data_description": {
+          "enable_controls": "Creates a local retained-intent store once. Controls stay locked after every restart until you check the feeder and clear any uncertain command."
         }
       }
+    },
+    "error": {
+      "invalid_auth": "The email or password was not accepted. Check them in the PetSafe app.",
+      "challenge_required": "The account needs an extra verification step or is locked. Sign in with the PetSafe app first, then use \"Use an existing Tuya Local entry\" if this keeps failing.",
+      "unsupported_region": "Sign-in for this region or app version is not supported.",
+      "timeout": "The PetSafe service did not answer in time.",
+      "cannot_connect": "The PetSafe service could not be reached or sent an unexpected answer.",
+      "no_feeders": "No supported FreshFeed feeder was found in this account.",
+      "rate_limited": "Wait 60 seconds between sign-in attempts.",
+      "invalid_host": "Enter a private IPv4 address (10.x.x.x, 172.16.x.x to 172.31.x.x, or 192.168.x.x)."
     },
     "abort": {
       "no_source": "No tuya_local PetSafe FreshFeed device found.",
       "already_configured": "This FreshFeed device is already configured.",
       "binding_unavailable": "The tuya_local FreshFeed device registry entry could not be identified; controls were not enabled.",
-      "provision_failed": "The retained-intent store could not be created. Nothing was saved; an existing partial store is left untouched for manual recovery."
+      "provision_failed": "The retained-intent store could not be created. Nothing was saved; an existing partial store is left untouched for manual recovery.",
+      "account_unavailable": "Sign in with PetSafe is not available in this installation. Use \"Use an existing Tuya Local entry\".",
+      "tuya_local_missing": "Tuya Local is not installed. Install Tuya Local release 2026.10.0 exactly from HACS (HACS offers the latest release by default), restart Home Assistant and try again.",
+      "tuya_local_unsupported": "The installed Tuya Local is not release 2026.10.0, or it was updated without a restart. Install release 2026.10.0 exactly from HACS, restart Home Assistant and try again. To keep another Tuya Local version, add the feeder in Tuya Local yourself and choose \"Use an existing Tuya Local entry\".",
+      "profile_conflict": "Tuya Local already has a different petsafe_freshfeed_raw profile. It was not changed. Remove or restore it, then try again.",
+      "profile_install_failed": "The PetSafe FreshFeed profile could not be installed into Tuya Local. No Tuya Local entry was created.",
+      "unexpected_step": "Tuya Local's setup asked for something unexpected and was stopped. No Tuya Local entry was created. The PetSafe FreshFeed device profile may remain installed in Tuya Local, which is harmless.",
+      "connection_failed": "Tuya Local could not connect to the feeder. Check that it is powered and on the same network, then try again. No Tuya Local entry was created. The PetSafe FreshFeed device profile may remain installed in Tuya Local, which is harmless.",
+      "not_supported": "Tuya Local did not offer the PetSafe FreshFeed profile for this device. No Tuya Local entry was created. The PetSafe FreshFeed device profile may remain installed in Tuya Local, which is harmless.",
+      "already_configured_other": "Tuya Local already has an entry for this feeder that cannot be used (for example disabled, ignored, not loaded or another profile). Fix or remove it in Tuya Local first.",
+      "already_in_progress": "Another setup for this feeder is in progress. Finish or close it, then try again.",
+      "aborted": "Setup was stopped. No Tuya Local entry was created. The PetSafe FreshFeed device profile may remain installed in Tuya Local, which is harmless.",
+      "tl_entry_kept_not_loaded": "A Tuya Local entry for the feeder was created and kept, but it did not finish loading. Check it in Tuya Local, then finish with \"Use an existing Tuya Local entry\".",
+      "tl_entry_kept_already_configured": "A Tuya Local entry for the feeder was created and kept, but this FreshFeed device is already configured here. Remove the extra Tuya Local entry if you do not need it, or finish with \"Use an existing Tuya Local entry\" after removing the other FreshFeed entry.",
+      "tl_entry_kept_already_in_progress": "A Tuya Local entry for the feeder was created and kept, but another setup for it is in progress. Finish with \"Use an existing Tuya Local entry\".",
+      "tl_entry_kept_binding_unavailable": "A Tuya Local entry for the feeder was created and kept, but its FreshFeed device registry entry could not be identified. Nothing else was saved. Finish with \"Use an existing Tuya Local entry\".",
+      "tl_entry_kept_provision_failed": "A Tuya Local entry for the feeder was created and kept, but the retained-intent store could not be created and nothing else was saved. Finish with \"Use an existing Tuya Local entry\".",
+      "tl_entry_kept_aborted": "A Tuya Local entry for the feeder was created and kept, but setup was stopped. Finish with \"Use an existing Tuya Local entry\"."
     }
   },
   "options": {

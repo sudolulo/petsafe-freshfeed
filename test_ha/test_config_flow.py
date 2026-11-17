@@ -32,6 +32,17 @@ async def mock_setup_entry(hass):
             await hass.config_entries.async_unload(entry.entry_id)
 
 
+@pytest.fixture(autouse=True)
+def no_bundled_app_profile():
+    """These tests cover the no-menu path: never see a bundled app_profile.json."""
+    from custom_components.petsafe_freshfeed import account
+    with patch(
+        "custom_components.petsafe_freshfeed.config_flow.account.load_app_profile",
+        side_effect=account.ProfileUnavailable(),
+    ):
+        yield
+
+
 async def _init(hass):
     return await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}

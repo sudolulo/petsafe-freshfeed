@@ -1,0 +1,434 @@
+{
+  "schema": "petsafe-offline-wire-contract/1",
+  "status": "offline_boundary_only",
+  "scope": "Finite public-source-derived wire contract for the offline gate. Not login compatibility, server acceptance, signer verification or credential-host approval.",
+  "qualifications": [
+    "actual signing unverified: seal/sign are an injected opaque provider; no independent signer or envelope vectors exist (research spec, Static-route assessment 2026-11-16).",
+    "ifencrypt is the pinned library's integer 1 (password_client.py:284); the APK caller passes a boolean true flag. Server acceptance of either JSON type is unverified.",
+    "Final form bytes follow the installed aiohttp 3.11.16 serializer (vendor/AIOHTTP_SERIALIZER_EVIDENCE.json); upstream declares aiohttp unversioned, so the author's runtime serializer version is unknown.",
+    "Country routes are conditional static public-cloud fallback candidates absent proprietary/configured overrides (COUNTRY_ROUTE_EVIDENCE.md); numeric codes are not unique countries; no active runtime provider is proven.",
+    "Business value bounds (lengths, character classes, gid scalar forms, token charset) are fail-closed narrowings chosen by this gate, not server schema evidence.",
+    "Response selectors are the library's tolerant recursive selectors, recorded for Task 2; they are not a proven server response schema and the boundary does not parse responses."
+  ],
+  "source": {
+    "repository": "https://github.com/abovecolin/tuya-mobile",
+    "revision": "ade70eff248764757aa177acf9bdd10440ae7394",
+    "base_url": "https://raw.githubusercontent.com/abovecolin/tuya-mobile/ade70eff248764757aa177acf9bdd10440ae7394/tuya_mobile/",
+    "files_sha256": {
+      "client.py": "e22dafe1ad78c49290083e31c46e22346165c9790d76091943514444967eccf6",
+      "password_client.py": "0fd644299e1448db23f9e3b71429304b4c9fe24a79381019de86dffaeeb49df6"
+    }
+  },
+  "source_anchors": [
+    {
+      "id": "sign_keys",
+      "file": "client.py",
+      "start": 28,
+      "end": 32,
+      "sha256": "ffb0d52ffdefbfafe9846d2e4ec1504a353b8795cf728d7ca20b17175a7e49f6"
+    },
+    {
+      "id": "canonical_string",
+      "file": "client.py",
+      "start": 35,
+      "end": 48,
+      "sha256": "6223245fa079d226abfa6cbd35a7e4d9420a6b399fd31a01f8d607a487661170"
+    },
+    {
+      "id": "business_encrypt",
+      "file": "client.py",
+      "start": 51,
+      "end": 54,
+      "sha256": "edd8d509f46ceee12d009af7322c9e36081b1907927f3599e80bd83679be4eaf"
+    },
+    {
+      "id": "response_decrypt",
+      "file": "client.py",
+      "start": 57,
+      "end": 64,
+      "sha256": "b57c52c16cd62017687e7a0af0eefd7c85a2e47d1393fea2da0fe56f69f7b8a8"
+    },
+    {
+      "id": "default_version",
+      "file": "client.py",
+      "start": 107,
+      "end": 109,
+      "sha256": "abd267d409225e66add9e27d71b891f1f904f52033828676733ea87271ef389f"
+    },
+    {
+      "id": "envelope_fields",
+      "file": "client.py",
+      "start": 110,
+      "end": 148,
+      "sha256": "2d87c1410d21a4bcf6858f8f707c69daf44ddb4818aa3ee5fd700bcbabe8b218"
+    },
+    {
+      "id": "form_post",
+      "file": "client.py",
+      "start": 149,
+      "end": 161,
+      "sha256": "30921b4d66a0c093582728f78f798595a10a76a7525dae4ca8f5d9fdd646723e"
+    },
+    {
+      "id": "homes_and_devices",
+      "file": "client.py",
+      "start": 199,
+      "end": 221,
+      "sha256": "2daf225f780170dc5469a6c00dcfeb23637bd38c22fd8a95ea699f46d558c000"
+    },
+    {
+      "id": "publish_exists",
+      "file": "client.py",
+      "start": 232,
+      "end": 236,
+      "sha256": "0c3389293d731bde78acb5a0d2461ef5de2b60272182231fdcc6886fd503e5dc"
+    },
+    {
+      "id": "api_rows",
+      "file": "password_client.py",
+      "start": 40,
+      "end": 49,
+      "sha256": "e7782ec533d34286b1dd4a0c323122469845c9a64e22099c78ca0fb3e1c6aa92"
+    },
+    {
+      "id": "token_selector",
+      "file": "password_client.py",
+      "start": 113,
+      "end": 128,
+      "sha256": "3951c801d8c6d901376ab0bb2d601d0f0b405d17552ada62c0065d45a7d010fb"
+    },
+    {
+      "id": "session_selector",
+      "file": "password_client.py",
+      "start": 147,
+      "end": 171,
+      "sha256": "2a18c3d9d86e19d6907813cef84c0e937663a85bd94763e0d0834663f44595de"
+    },
+    {
+      "id": "password_transform",
+      "file": "password_client.py",
+      "start": 174,
+      "end": 190,
+      "sha256": "5f22e329eaeea40ac568ec3bce5df4e42c0a68eebb906d23d09f64e4942ae1fc"
+    },
+    {
+      "id": "email_login",
+      "file": "password_client.py",
+      "start": 269,
+      "end": 302,
+      "sha256": "1ac7a65547e7fe42c694ae9835a348e24f679650bc23047ac011149b8432ef38"
+    },
+    {
+      "id": "token_request",
+      "file": "password_client.py",
+      "start": 304,
+      "end": 330,
+      "sha256": "cd4e07abb3a4f1df5043e369736dee08611976b8ec4171613c4e028a9f086158"
+    },
+    {
+      "id": "server_endpoint",
+      "file": "password_client.py",
+      "start": 388,
+      "end": 395,
+      "sha256": "480448e49482b99c86470adafa448e1ec0584891b3a064af164ec0d5077092e7"
+    }
+  ],
+  "form": {
+    "method": "POST",
+    "content_type": "application/x-www-form-urlencoded",
+    "encoding": "urllib.parse.urlencode(pairs, doseq=True, encoding='utf-8') over source insertion order (quote_plus)",
+    "max_body_bytes": 8192,
+    "max_business_bytes": 4096,
+    "max_envelope_value_chars": 256,
+    "evidence": [
+      "client.py:149-154 session.post(data=params)",
+      "aiohttp 3.11.16 client_reqrep.py:580-591 wraps dict in FormData",
+      "aiohttp 3.11.16 formdata.py:123-139 urlencode(doseq=True, encoding=utf-8), content type without charset for utf-8"
+    ]
+  },
+  "business_json": {
+    "encoding": "json.dumps(payload, separators=(',', ':'), ensure_ascii=False).encode('utf-8')",
+    "post_data": "base64(nonce12 || AES-GCM ciphertext || tag16); decoded length = 28 + len(business_json)",
+    "evidence": [
+      "client.py:51-54"
+    ]
+  },
+  "envelope": {
+    "order": [
+      "a",
+      "v",
+      "clientId",
+      "os",
+      "appVersion",
+      "channel",
+      "osSystem",
+      "sdkVersion",
+      "deviceCoreVersion",
+      "platform",
+      "timeZoneId",
+      "cp",
+      "nd",
+      "lang",
+      "ttid",
+      "et",
+      "chKey",
+      "deviceId",
+      "time",
+      "requestId",
+      "postData",
+      "appRnVersion",
+      "bizDM",
+      "sid",
+      "sign"
+    ],
+    "boundary_owned": [
+      "a",
+      "v",
+      "postData",
+      "sign"
+    ],
+    "literals": {
+      "os": "Android",
+      "cp": "gzip",
+      "nd": "1"
+    },
+    "provider_supplied": [
+      "clientId",
+      "appVersion",
+      "channel",
+      "osSystem",
+      "sdkVersion",
+      "deviceCoreVersion",
+      "platform",
+      "timeZoneId",
+      "lang",
+      "ttid",
+      "et",
+      "chKey",
+      "deviceId",
+      "time",
+      "requestId"
+    ],
+    "optional": [
+      "appRnVersion",
+      "bizDM"
+    ],
+    "session": "sid",
+    "seal_request_id_field": "requestId",
+    "sign_keys": [
+      "a",
+      "appVersion",
+      "chKey",
+      "clientId",
+      "deviceId",
+      "et",
+      "h5",
+      "h5Token",
+      "lang",
+      "lat",
+      "lon",
+      "n4h5",
+      "os",
+      "postData",
+      "requestId",
+      "sid",
+      "sp",
+      "time",
+      "ttid",
+      "v"
+    ],
+    "sign_format": "lowercase hex, 64 characters (generic signer hexdigest; PetSafe signer unverified)",
+    "evidence": [
+      "client.py:28-48",
+      "client.py:110-148",
+      "vendor/tuya_mobile/signer.py:76-80 (public generic signer format only)"
+    ],
+    "excluded_source_behaviour": "Profile-less defaults (EU URL, bizDM=ipc, version strings) at client.py:80-81,118-143 are not used; every non-literal value comes from the opaque provider."
+  },
+  "operations": {
+    "TOKEN": {
+      "action": "thing.m.user.username.token.get",
+      "version": "2.0",
+      "session": "forbidden",
+      "business": [
+        [
+          "countryCode",
+          "country_code"
+        ],
+        [
+          "username",
+          "email"
+        ],
+        [
+          "isUid",
+          {
+            "literal": false
+          }
+        ]
+      ],
+      "evidence": [
+        "password_client.py:40",
+        "password_client.py:311-317"
+      ]
+    },
+    "PASSWORD_LOGIN": {
+      "action": "thing.m.user.email.password.login",
+      "version": "3.0",
+      "session": "forbidden",
+      "business": [
+        [
+          "countryCode",
+          "country_code"
+        ],
+        [
+          "email",
+          "email"
+        ],
+        [
+          "passwd",
+          "rsa_hex"
+        ],
+        [
+          "options",
+          {
+            "literal": "{\"group\":1,\"mfaCode\":\"\"}"
+          }
+        ],
+        [
+          "token",
+          "login_token"
+        ],
+        [
+          "ifencrypt",
+          {
+            "literal": 1
+          }
+        ]
+      ],
+      "evidence": [
+        "password_client.py:41",
+        "password_client.py:49",
+        "password_client.py:174-190",
+        "password_client.py:274-285"
+      ]
+    },
+    "HOMES": {
+      "action": "m.life.home.space.list",
+      "version": "1.0",
+      "session": "required",
+      "business": [],
+      "evidence": [
+        "client.py:108 default version",
+        "client.py:200"
+      ]
+    },
+    "DEVICES": {
+      "action": "m.life.my.group.device.list",
+      "version": "2.2",
+      "session": "required",
+      "business": [
+        [
+          "gid",
+          "group_id"
+        ]
+      ],
+      "evidence": [
+        "client.py:203-209 gid forwarded unchanged from the homes response"
+      ]
+    }
+  },
+  "value_types": {
+    "country_code": "string key of country_routes; must equal the route's country_code",
+    "email": "str, 3-254 chars, exactly one '@', printable, no whitespace (password_client.py:274 selects the email branch on '@')",
+    "rsa_hex": "lowercase hex, even length, 128-2048 chars (password_client.py:190 .hex())",
+    "login_token": "str, 1-1024 printable ASCII chars, no whitespace (password_client.py:283 str(token['token']))",
+    "group_id": "int 1..2**63-1 (not bool) or str matching [A-Za-z0-9_-]{1,64}; Task 2 must pass the exact HOMES-selected value"
+  },
+  "response_selectors": {
+    "enforced_here": false,
+    "transport": "JSON object with 'result' (base64 AES-GCM, optional gzip) else errorCode/code, errorMsg/msg (client.py:154-161, 57-64)",
+    "token": [
+      "publicKey",
+      "exponent",
+      "token"
+    ],
+    "session_aliases": {
+      "sid": [
+        "sid",
+        "session",
+        "sessionId"
+      ],
+      "ecode": [
+        "ecode",
+        "eCode",
+        "encryptCode"
+      ],
+      "uid": [
+        "uid",
+        "userId"
+      ]
+    },
+    "homes_gid_aliases": [
+      "gid",
+      "groupId",
+      "homeId"
+    ],
+    "device_aliases": {
+      "id": [
+        "devId",
+        "deviceId",
+        "id"
+      ],
+      "local_key": [
+        "localKey",
+        "local_key"
+      ],
+      "ip": [
+        "ip",
+        "lanIp"
+      ],
+      "online": [
+        "isOnline",
+        "cloudOnline"
+      ],
+      "name": [
+        "name"
+      ],
+      "uuid": [
+        "uuid"
+      ]
+    },
+    "product_id": "No source-supported product selector for the group device list; productId/product_id appears only for thing.m.device.get (password_client.py:444), which is outside this contract.",
+    "server_directed_url_fields": [
+      "domain.mobileApiUrl",
+      "mobileApiUrl"
+    ],
+    "server_directed_url_policy": "never followed; any value differing from the current route is a terminal rejection (source behaviour at password_client.py:293-294,388-395 is not reused)",
+    "evidence": [
+      "password_client.py:113-128",
+      "password_client.py:147-171",
+      "client.py:199-221"
+    ]
+  },
+  "regions": {
+    "AZ": "https://a1-us.iotbing.com/api.json",
+    "EU": "https://a1.tuyaeu.com/api.json",
+    "IN": "https://a1-in.iotbing.com/api.json",
+    "RU": "https://a1.iot334.com/api.json"
+  },
+  "country_routes": {
+    "1": "AZ",
+    "44": "EU",
+    "91": "IN",
+    "7": "RU"
+  },
+  "country_route_evidence": "COUNTRY_ROUTE_EVIDENCE.md: getApiUrlByCountryCode -> getDefaultRegion(Context,String) -> getDefaultRegion(String) static fallbacks 1->AZ, 91->IN, 7->RU, unmatched->EU (44 is the evidenced unmatched GB/IM code); packaged mobileApiUrl records AZ/EU/IN/RU. Unknown, CN/AY, empty/timezone and override routes are unsupported.",
+  "unsupported": [
+    "Telephone/mobile login variants (password_client.py:42-47,357-386): not in this contract.",
+    "thing.m.device.get credentials (password_client.py:48,397-445), s.m.dev.dp.get status and thing.m.device.dp.publish (client.py:223-242): never emitted.",
+    "Token endpoint retries/fallbacks (password_client.py:304-330) and server-directed endpoint replacement (password_client.py:388-395): not reused.",
+    "AY/CN route: no packaged host; rejected.",
+    "Independent PetSafe signer/envelope vectors: none exist; actual signing unverified.",
+    "Product verification from the group device list: no source-supported selector (see response_selectors.product_id)."
+  ]
+}

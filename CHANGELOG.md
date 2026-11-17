@@ -1,5 +1,35 @@
 # Changelog
 
+## Integration [0.3.0] - 2026-11-17
+
+### Added
+- "Sign in with PetSafe" setup path: a read-only account client signs in once with
+  the PetSafe app email and password (one attempt per 60 seconds, no automatic retry,
+  closed host allowlist, fixed headers) and returns supported FreshFeed devices with
+  device ID, local key and name. The password and email are not stored. Sign-in
+  supports four regions only, by country code: 1 (Americas), 44 (Europe), 91 (India)
+  and 7 (Russia). The 60-second limit is held in memory per Home Assistant instance
+  and resets on restart.
+- Prerequisite for the sign-in path: Tuya Local release 2026.10.0 exactly (HACS
+  installs the latest release by default; choose 2026.10.0). With another Tuya Local
+  version, use "Use an existing Tuya Local entry".
+- LAN locator that listens passively on UDP 6666/6667 for the feeder's broadcast to
+  learn its address and protocol version; otherwise the flow asks for a private IPv4
+  address. It sends nothing.
+- Tuya Local setup assist: checks the pinned Tuya Local release on disk and as loaded,
+  installs the bundled `petsafe_freshfeed_raw` profile when absent (never overwriting a
+  different file), and drives Tuya Local's own config flow to create its entry, which
+  alone stores the local key. No feeder command is sent during setup.
+- NOTICE attributes the account package's port of algorithms from
+  abovecolin/tuya-mobile (revision ade70eff248764757aa177acf9bdd10440ae7394) and
+  includes its MIT license text.
+- `tools/build-hacs.py --profile-dir` bundles the app profile into the built package
+  only; `--release` requires it. Builds without it hide the sign-in path.
+
+### Changed
+- With a bundled app profile, setup starts with a menu; "Use an existing Tuya Local
+  entry" is the previous path, unchanged, including the manual profile copy.
+
 ## Distribution preparation - 2026-11-15
 
 ### Added

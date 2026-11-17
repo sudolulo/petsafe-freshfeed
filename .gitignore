@@ -3,3 +3,4 @@ harness/out/
 deploy/lovelace-before.json
 __pycache__/
 *.py[cod]
+custom_components/petsafe_freshfeed/account/app_profile.json

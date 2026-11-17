@@ -4,10 +4,14 @@
   "provenance": {
     "tuya_local_revision": "027351717d3f6b8bef30c47a018944b430f5661e",
     "tinytuya_version": "1.20.0",
-    "verified": "2026-11-12: research venv files match tinytuya-1.20.0 dist-info RECORD; live Home Assistant container files and live tuya_local device.py hash identically."
+    "verified": "2026-11-12: research venv files match tinytuya-1.20.0 dist-info RECORD; live Home Assistant container files and live tuya_local device.py hash identically.",
+    "tuya_local_release": "2026.10.0"
   },
   "files": {
     "custom_components/tuya_local/device.py": "2c6092f087eb4d71e9c48abbe34e9c82e0189a604aaf3b7ce8f8493cd3e60aff",
+    "custom_components/tuya_local/config_flow.py": "8a2127066bed8c64c7cc45a31ac557f32b5f267c996ba7b0ef5ca41ff850abdc",
+    "custom_components/tuya_local/discovery.py": "b554d78293f45f5fb16cd1dbc2c92055f732bc8d5945a79a18b86d96f65d5780",
+    "custom_components/tuya_local/helpers/device_config.py": "9a836f83e98ffaddf0fe555f1a9d1a86c94cedeb3d45ef18dbee6bb428ae4e59",
     "tinytuya/__init__.py": "f86d5d0908ba049b9cf1f0bcd61112dd110f2a97cfd8c94ca7cd21009deffb10",
     "tinytuya/core/Device.py": "7198545e788da17bce360999ece54e98d09a27d614f431adf62a1fc99c37c211",
     "tinytuya/core/Monitor.py": "6464d454da0dea0ad872c55162ebf74633550c4b4b25ae7388d2253cd37650f3",
