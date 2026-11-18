@@ -30,6 +30,8 @@ async def test_retention_on_load_preserves_schedule_and_last_fed(hass, source_en
         assert len(hub.events) == 500
         assert hub.events == list(reversed(recent[:500]))
         assert hub.last_fed == expired.at
+        assert hub.observed_meals_dispensed_total == 0  # never backfill retained events
+        assert hub.counting_since.tzinfo is not None
         assert hub.schedule.entries == cached.entries
         assert hub.schedule.source_state == "last_known"
     finally:
@@ -58,6 +60,7 @@ async def test_quiet_tick_expires_history_and_persists_without_new_event(hass, s
             save.assert_called_once()
             assert save.call_args.args[0]()["events"] == []
         assert hub.last_fed == event.at
+        assert hub.observed_meals_dispensed_total == 1  # independent of seven-day pruning
     finally:
         await hub.async_stop()
 

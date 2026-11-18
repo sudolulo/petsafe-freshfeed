@@ -31,7 +31,7 @@ OWNED_SOURCE = '''local_source.py owned_source.py owned_compat.py owned_fingerpr
 MIGRATION = '''migration_state.py migration_journal.py migration.py'''.split()
 # Owned-backend setting entity platforms (stainless inserts, meal counter, brightness).
 SETTINGS = '''switch.py number.py owned_setting.py'''.split()
-RUNTIME = RUNTIME + ACCOUNT + OWNED_SOURCE + MIGRATION + SETTINGS
+RUNTIME = RUNTIME + ACCOUNT + OWNED_SOURCE + MIGRATION + SETTINGS + ['diagnostics.py', 'repairs.py', 'device_trigger.py']
 APP_PROFILE = COMPONENT + 'account/app_profile.json'
 APP_PROFILE_DEST = 'petsafe-freshfeed/' + APP_PROFILE
 PROFILE_FILE = 'public-apk-profile.private.json'
@@ -57,9 +57,11 @@ CERT_SENTINEL = FAKE_PROFILE['cert_sha256_hex']
 COMMON = {'LICENSE', 'NOTICE', 'README.md', 'hacs.json', '.github/workflows/validate.yml', 'assets/brand/logo.svg', 'assets/brand/readme.png'}
 PROFILE_SRC = 'config/tuya_local/petsafe_freshfeed_raw.yaml'
 PROFILE_DEST = 'petsafe-freshfeed/examples/tuya_local/petsafe_freshfeed_raw.yaml'
+BLUEPRINTS = {f'blueprints/automation/petsafe_freshfeed/{name}.yaml' for name in (
+    'low_estimated_meals', 'feeder_attention', 'refill_cleaning_reminder')}
 EXPECTED = {
-    'petsafe-freshfeed': COMMON | {COMPONENT + n for n in RUNTIME} | {COMPONENT + 'brand/icon.png'} | {'examples/tuya_local/petsafe_freshfeed_raw.yaml'},
-    'pet-feeder-card': COMMON | {'dist/pet-feeder-card.js', 'dist/freshfeed-model.js'},
+    'petsafe-freshfeed': COMMON | {COMPONENT + n for n in RUNTIME} | {COMPONENT + 'brand/icon.png'} | {'examples/tuya_local/petsafe_freshfeed_raw.yaml'} | BLUEPRINTS,
+    'pet-feeder-card': COMMON | {'dist/pet-feeder-card.js', 'dist/freshfeed-model.js', 'dist/pet-feeder-card-editor.js', 'dist/freshfeed-editor-model.js'},
 }
 spec = importlib.util.spec_from_file_location('build_hacs', SCRIPT)
 exporter = importlib.util.module_from_spec(spec)
@@ -101,6 +103,14 @@ class DistributionTest(unittest.TestCase):
             for value in (*FAKE_PROFILE.values(), *FAKE_ENVELOPE.values()):
                 self.assertNotIn(value, stream)
 
+    def test_blueprint_exports_are_byte_identical_root_files(self):
+        out = self.good_build()
+        for path in BLUEPRINTS:
+            self.assertEqual((out / 'petsafe-freshfeed' / path).read_bytes(),
+                             (ROOT / path).read_bytes())
+            self.assertEqual(exporter.INTEGRATION[path], path)
+            self.assertNotIn(path, exporter.RUNTIME)
+
     def good_build(self, name='export'):
         out = self.base / name
         result = self.build(out)
@@ -120,6 +130,13 @@ class DistributionTest(unittest.TestCase):
             f'{hashlib.sha256(files[p]).hexdigest()}  {p}\n' for p in sorted(expected)))
         for tree in EXPECTED:
             self.assertNotIn(b'holden@', (a / tree / 'NOTICE').read_bytes())
+
+    def test_card_sibling_module_imports_resolve(self):
+        import re
+        out = self.good_build() / 'pet-feeder-card' / 'dist'
+        for module in out.glob('*.js'):
+            for sibling in re.findall(r"['\"](\./[^'\"]+\.js)(?:\?[^'\"]*)?['\"]", module.read_text()):
+                self.assertTrue((module.parent / sibling).is_file(), f'{module.name}: {sibling}')
 
     def test_notice_attributes_tuya_mobile_with_full_mit_text(self):
         out = self.good_build()
@@ -161,8 +178,8 @@ class DistributionTest(unittest.TestCase):
         ):
             self.assertIn(required, readme, f'readme missing: {required}')
 
-    def test_release_draft_040_metadata(self):
-        """Integration draft 0.4.0; HACS minimum HA 2026.10.0; npm/card versions unchanged."""
+    def test_release_050_040_metadata(self):
+        """Release versions retain the pinned compatibility contract."""
         out = self.good_build()
         integration = out / 'petsafe-freshfeed'
         hacs = json.loads((integration / 'hacs.json').read_text())
@@ -170,17 +187,69 @@ class DistributionTest(unittest.TestCase):
         self.assertEqual(hacs['name'], 'PetSafe FreshFeed')
         self.assertFalse(hacs.get('content_in_root', False))
         manifest = json.loads((integration / COMPONENT / 'manifest.json').read_text())
-        self.assertEqual(manifest['version'], '0.4.0')
+        self.assertEqual(manifest['version'], '0.5.0')
         self.assertEqual(manifest['after_dependencies'], ['tuya_local'])
         self.assertNotIn('dependencies', manifest)
         self.assertEqual(manifest['requirements'], ['tinytuya==1.20.0'])
         package = json.loads((ROOT / 'package.json').read_text())
-        self.assertEqual(package['version'], '0.3.0')
-        self.assertIn('**0.3.0**', (ROOT / 'distribution/README-card.md').read_text())
+        self.assertEqual(package['version'], '0.4.0')
+        lock = json.loads((ROOT / 'package-lock.json').read_text())
+        self.assertEqual(lock['version'], '0.4.0')
+        self.assertEqual(lock['packages']['']['version'], '0.4.0')
+        self.assertIn('**0.4.0**', (ROOT / 'distribution/README-card.md').read_text())
         changelog = (ROOT / 'CHANGELOG.md').read_text()
-        self.assertIn('## Integration [0.4.0]', changelog)
+        self.assertIn('## Integration [0.5.0] - 2026-11-18', changelog)
+        self.assertIn('## Card [0.4.0] - 2026-11-18', changelog)
+        self.assertIn('## Integration [0.4.0] - 2026-11-18', changelog)
         self.assertLess(changelog.index('## Integration [0.4.0]'),
                         changelog.index('## Integration [0.3.0]'))
+
+    def test_early_compatibility_and_safety_contract(self):
+        for path in ('README.md', 'distribution/README-card.md', 'distribution/README-integration.md'):
+            text = (ROOT / path).read_text()
+            early = text[:2500]
+            for value in ('0.5.0', '0.4.0', '2026.10.0', '2026.10.x', '1.20.0', '3.5'):
+                self.assertIn(value, early, f'{path}: {value}')
+            for value in ('administrator', 'blueprint', 'offline', 'advisory'):
+                self.assertIn(value, text.lower(), f'{path}: {value}')
+
+    def test_release_documentation_examples_and_install_closure(self):
+        readme = (ROOT / 'README.md').read_text()
+        deploy = readme.split('## Deploy', 1)[1].split('### FreshFeed', 1)[0]
+        for module in ('pet-feeder-card.js', 'freshfeed-model.js',
+                       'pet-feeder-card-editor.js', 'freshfeed-editor-model.js'):
+            self.assertIn(f'scp card/{module}', deploy)
+        spec_text = (ROOT / 'docs/card-spec.md').read_text()
+        self.assertNotIn('No visual editor.', spec_text)
+        self.assertNotIn('One deployable ES module:', spec_text)
+        for phrase in ('0.4.0', 'getConfigElement', 'advisory', 'Estimated', 'aria-modal'):
+            self.assertIn(phrase, spec_text)
+        text = (ROOT / 'distribution/README-card.md').read_text()
+        examples = [yaml.safe_load(block) for block in re.findall(r'```yaml\n(.*?)```', text, re.S)]
+        semantic = [example for example in examples if 'freshfeed' in example]
+        self.assertEqual(len(semantic), 1)
+        config = semantic[0]
+        self.assertEqual(set(config['freshfeed']), {'entry_id', 'schedule_entity',
+                         'write_status_entity', 'quick_feed_entity', 'history_entity'})
+        self.assertTrue(config['entities'])
+        self.assertFalse(config.get('actions'))
+        config['freshfeed']['entry_id'] = 'synthetic_release_entry_42'
+        result = subprocess.run(['node', '--input-type=module', '-e',
+            "import {validateConfig} from './card/pet-feeder-card.js'; "
+            "validateConfig(JSON.parse(process.argv[1]));", json.dumps(config)],
+            cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_blueprint_documentation_has_full_source_and_import_urls(self):
+        from urllib.parse import quote
+        for path in ('README.md', 'distribution/README-card.md', 'distribution/README-integration.md'):
+            text = (ROOT / path).read_text()
+            for blueprint in BLUEPRINTS:
+                raw = 'https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/main/' + blueprint
+                self.assertIn(raw, text, path)
+                self.assertIn('https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=' + quote(raw, safe=''), text, path)
+            for phrase in ('does not automatically install', 'unsaved increments', 'administrator', 'without backfill'):
+                self.assertIn(phrase, text, path)
 
     def test_readmes_document_standalone_and_migration(self):
         built = (self.good_build() / 'petsafe-freshfeed/README.md').read_text()
@@ -248,7 +317,7 @@ class DistributionTest(unittest.TestCase):
         self.assertTrue((ROOT / PROFILE_SRC).is_file())
         self.assertEqual(set(exporter.INTEGRATION.values()),
                          {'LICENSE', 'distribution/NOTICE-public', 'assets/brand/logo.svg', 'assets/brand/readme.png', PROFILE_SRC, 'assets/brand/icon.png', 'distribution/README-integration.md', 'distribution/hacs-integration.json', 'distribution/workflow-integration.yml'}
-                         | {COMPONENT + n for n in RUNTIME})
+                         | {COMPONENT + n for n in RUNTIME} | BLUEPRINTS)
 
     def test_manifests_png_and_import_closure(self):
         out = self.good_build()
@@ -256,7 +325,7 @@ class DistributionTest(unittest.TestCase):
         card = out / 'pet-feeder-card'
         manifest = json.loads((integration / COMPONENT / 'manifest.json').read_text())
         self.assertEqual(manifest['domain'], 'petsafe_freshfeed')
-        self.assertEqual(manifest['version'], '0.4.0')
+        self.assertEqual(manifest['version'], '0.5.0')
         self.assertNotIn('tuya_local', manifest.get('dependencies', []))
         self.assertEqual(manifest['codeowners'], ['@sudolulo'])
         self.assertEqual(manifest['issue_tracker'], 'https://github.com/sudolulo/petsafe-freshfeed/issues')

@@ -1,5 +1,31 @@
 # pet-feeder-card
 
+## Compatibility
+
+| Component | Compatibility |
+|---|---|
+| FreshFeed integration 0.5.0 | Standalone: HA >= 2026.10.0, TinyTuya 1.20.0, protocol 3.5; Tuya Local is not required. |
+| Legacy and migration | Fingerprint-compatible Tuya Local 2026.10.0; migration only HA 2026.10.x. |
+| Card 0.4.0 | Aqara and raw modes are independent of the FreshFeed integration. |
+
+The visual editor discovers entities where registry access permits; manual YAML remains
+available. The five-minute near-meal warning is advisory only, not verified app
+pre-defrost parity; saving remains allowed. Estimates derive from compartment position,
+assuming a filled tray, not measured food or consumption. Observed-meal statistics
+exclude offline gaps and unsaved increments, start at zero without backfill, and can
+lose recent increments on abrupt power loss. Diagnostics omit identifying data;
+Repairs only advise and do not mutate retained intent. Guarded services reject missing
+or non-administrator contexts; automations are not automatically authorized.
+
+HACS does not automatically install root blueprints. Import from the source links below
+or manually copy the YAML into `/config/blueprints/automation/petsafe_freshfeed/`.
+These blueprints notify or update helpers, not feeder commands; the links are source
+locations, not a claim of publication or availability.
+
+- Low estimated meals: [source](https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/main/blueprints/automation/petsafe_freshfeed/low_estimated_meals.yaml) / [import](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fsudolulo%2Fpetsafe-freshfeed%2Fmain%2Fblueprints%2Fautomation%2Fpetsafe_freshfeed%2Flow_estimated_meals.yaml)
+- Feeder attention: [source](https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/main/blueprints/automation/petsafe_freshfeed/feeder_attention.yaml) / [import](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fsudolulo%2Fpetsafe-freshfeed%2Fmain%2Fblueprints%2Fautomation%2Fpetsafe_freshfeed%2Ffeeder_attention.yaml)
+- Refill/cleaning: [source](https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/main/blueprints/automation/petsafe_freshfeed/refill_cleaning_reminder.yaml) / [import](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fsudolulo%2Fpetsafe-freshfeed%2Fmain%2Fblueprints%2Fautomation%2Fpetsafe_freshfeed%2Frefill_cleaning_reminder.yaml)
+
 A Home Assistant Lovelace custom card for pet feeders, laid out like the Whisker
 Litter-Robot card: status header, a large product illustration, round action buttons,
 a chip, a food gauge and a metrics footer. Two models have artwork and defaults:
@@ -32,13 +58,18 @@ npm install --no-fund --no-audit && npm test && npm run shoot
 # After backing up the current module and confirming the live Lovelace resource:
 scp card/freshfeed-model.js ha-host:/config/www/pet-feeder-card/freshfeed-model.js.new
 ssh ha-host 'mv -f /config/www/pet-feeder-card/freshfeed-model.js.new /config/www/pet-feeder-card/freshfeed-model.js'
+scp card/freshfeed-editor-model.js ha-host:/config/www/pet-feeder-card/freshfeed-editor-model.js.new
+ssh ha-host 'mv -f /config/www/pet-feeder-card/freshfeed-editor-model.js.new /config/www/pet-feeder-card/freshfeed-editor-model.js'
+scp card/pet-feeder-card-editor.js ha-host:/config/www/pet-feeder-card/pet-feeder-card-editor.js.new
+ssh ha-host 'mv -f /config/www/pet-feeder-card/pet-feeder-card-editor.js.new /config/www/pet-feeder-card/pet-feeder-card-editor.js'
 scp card/pet-feeder-card.js ha-host:/config/www/pet-feeder-card/pet-feeder-card.js.new
 ssh ha-host 'mv -f /config/www/pet-feeder-card/pet-feeder-card.js.new /config/www/pet-feeder-card/pet-feeder-card.js'
 # Update only the existing resource URL's cache-buster, then:
 tools/with-ha-token.sh node tools/ha-ws.mjs tools/cmds/update-resource.json
 ```
 
-Install both module files together; the entry module imports its sibling model module.
+Install all four sibling modules together: `pet-feeder-card.js`, `freshfeed-model.js`,
+`pet-feeder-card-editor.js` and `freshfeed-editor-model.js`.
 When changing the model module, also bump its import query version in the entry module
 (the Lovelace resource cache-buster alone does not invalidate imported modules).
 This updates the module files and resource cache-buster only; it preserves existing
@@ -79,7 +110,7 @@ tools/with-ha-token.sh node tools/add-cards.mjs deploy/cards.json
 tools/with-ha-token.sh node tools/shoot-live.mjs
 ```
 
-## FreshFeed integration 0.4.0 (local release draft)
+## FreshFeed integration 0.5.0
 
 Integration 0.4.0 adds standalone entries: Tuya Local is not required. A standalone
 entry owns exactly one local connection to the feeder through the pinned Python
@@ -274,8 +305,8 @@ data: {entry_id: synthetic_entry, operation_id: synthetic_operation, session_id:
 The local browser harness allocates a unique `harness/out/parity-*` directory and
 preserves existing output. Local B/H/F/V checks are software evidence only: no loaded
 production-runtime admission, hardware verification, acoustic-effect check, deployment,
-or physical-ingestion success is claimed. Integration version 0.4.0 is independent of
-the npm package 0.3.0 and card internal 0.2.0 versions.
+or physical-ingestion success is claimed. Integration version 0.5.0 and card/package
+version 0.4.0 are independently versioned.
 
 ## Read-only raw device data
 

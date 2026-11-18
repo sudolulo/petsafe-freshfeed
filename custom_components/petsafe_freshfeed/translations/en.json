@@ -1,9 +1,34 @@
 {
+  "device_automation": {
+    "trigger_type": {
+      "dispensed": "Meal dispensed (observed)",
+      "refilled": "Tray refilled (observed)",
+      "skipped_empty": "Meal skipped: estimated empty tray",
+      "skipped_fault": "Meal skipped: fault",
+      "meal_report": "Meal report",
+      "all_meals_report": "All meals report",
+      "interrupted": "Feeding interrupted"
+    }
+  },
+  "issues": {
+    "uncertain_intent": {
+      "title": "Feeder confirmation required",
+      "description": "Inspect the feeder, then use the existing card recovery controls. Do not delete retained-intent storage."
+    },
+    "offline": {
+      "title": "Feeder observations unavailable",
+      "description": "Required feeder observations have been unavailable for 15 minutes. Check power and the local connection."
+    },
+    "unsupported_protocol": {
+      "title": "Unsupported local protocol",
+      "description": "This persisted feeder entry uses an unsupported local protocol. Only protocol 3.5 is supported."
+    }
+  },
   "config": {
     "step": {
       "user": {
         "title": "PetSafe FreshFeed",
-        "description": "Observe {title} through its tuya_local raw entities. Without controls no commands are sent to the feeder.",
+        "description": "Choose how to connect your PetSafe FreshFeed. Without controls no commands are sent to the feeder.",
         "data": {
           "source_entry_id": "tuya_local FreshFeed device",
           "enable_controls": "Enable controls"
@@ -180,14 +205,53 @@
       "migration_operation_active": "A command is still settling; try again once it has finished."
     }
   },
+  "exceptions": {
+    "invalid_request": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "confirmation_required": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "invalid_operation": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "admin_required": {"message": "Use an administrator account."},
+    "unknown_entry": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "source_unavailable": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "recovery_rejected": {"message": "Inspect the feeder and use the existing recovery controls."},
+    "stopped": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "storage_fault": {"message": "Check storage and write status; do not delete retained intent."},
+    "integrity_fault": {"message": "Check storage and write status; do not delete retained intent."},
+    "busy": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "recovery_in_progress": {"message": "Inspect the feeder and use the existing recovery controls."},
+    "intent_uncertain": {"message": "Inspect the feeder and use the existing recovery controls."},
+    "source_incompatible": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "schedule_unknown": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "stale_schedule": {"message": "Reload the schedule before saving again."},
+    "quick_feed_active": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "defrost_active": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "feeding_active": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "status_unavailable": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "cancel_not_pending": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "empty_tray": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "already_refilled": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "controls_disabled": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "source_not_ready": {"message": "Check the feeder connection, controls and write status before trying again."},
+    "schedule_conflict": {"message": "Reload the schedule before saving again."},
+    "request_refused": {"message": "The request could not be confirmed. Check device and write status before trying again."},
+    "setting_refused": {"message": "Setting refused: {reason}"},
+    "setting_uncertain": {"message": "The setting could not be confirmed. Inspect the feeder and write status."},
+    "invalid_setting": {"message": "The setting value is invalid."}
+  },
   "entity": {
+    "switch": {
+      "stainless_inserts": {"name": "Stainless inserts"},
+      "meal_counter": {"name": "Meal counter"}
+    },
+    "number": {"brightness_setting": {"name": "Display brightness"}},
     "sensor": {
       "history": {
         "name": "History"
       },
       "quick_feed": {
-        "name": "Quick feed"
+        "name": "Quick feed",
+        "state": {"idle": "Idle", "pending": "Pending", "feeding": "Feeding", "ready": "Ready", "failed": "Failed"}
       },
+      "quick_feed_state": {"name": "Quick feed state"},
       "write_status": {
         "name": "Write status"
       },
@@ -198,13 +262,13 @@
         "name": "Status"
       },
       "meals_left": {
-        "name": "Meals left"
+        "name": "Estimated meals remaining"
       },
       "compartment": {
         "name": "Compartment"
       },
       "food_level": {
-        "name": "Food level",
+        "name": "Estimated food level",
         "state": {
           "high": "High",
           "low": "Low",
@@ -217,14 +281,17 @@
       "last_feed_result": {
         "name": "Last feed result",
         "state": {
-          "dispensed": "Dispensed",
-          "refilled": "Refilled",
-          "skipped_empty": "Skipped (empty)",
-          "skipped_fault": "Skipped (fault)"
+          "dispensed": "Meal dispensed (observed)",
+          "refilled": "Tray refilled (observed)",
+          "skipped_empty": "Meal skipped: estimated empty tray",
+          "skipped_fault": "Meal skipped: fault"
         }
       },
       "meals_today": {
         "name": "Meals today"
+      },
+      "observed_meals_dispensed_total": {
+        "name": "Observed meals dispensed total"
       },
       "next_meal": {
         "name": "Next meal"
@@ -236,10 +303,10 @@
         "name": "Brightness"
       },
       "firmware_a": {
-        "name": "Firmware A"
+        "name": "Firmware version"
       },
       "firmware_b": {
-        "name": "Firmware B"
+        "name": "Hardware version"
       },
       "last_report": {
         "name": "Last report"
@@ -253,7 +320,7 @@
         "name": "Fault"
       },
       "out_of_food": {
-        "name": "Out of food"
+        "name": "Estimated empty tray"
       },
       "defrosting": {
         "name": "Defrosting"
@@ -265,10 +332,13 @@
         "state_attributes": {
           "event_type": {
             "state": {
-              "dispensed": "Dispensed",
-              "refilled": "Refilled",
-              "skipped_empty": "Skipped (empty)",
-              "skipped_fault": "Skipped (fault)"
+              "dispensed": "Meal dispensed (observed)",
+              "refilled": "Tray refilled (observed)",
+              "skipped_empty": "Meal skipped: estimated empty tray",
+              "skipped_fault": "Meal skipped: fault",
+              "meal_report": "Meal report",
+              "all_meals_report": "All meals report",
+              "interrupted": "Feeding interrupted"
             }
           }
         }

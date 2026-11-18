@@ -1,5 +1,6 @@
 """Shared fixtures for the petsafe_freshfeed Home Assistant tests."""
 
+import logging
 from pathlib import Path
 
 import custom_components
@@ -33,6 +34,22 @@ RAW_DPS = {
     145: ("sensor", "6"),
     150: ("sensor", "0"),
 }
+
+
+@pytest.fixture(autouse=True)
+def vendor_logging_baseline():
+    """Keep pytest root DEBUG capture separate from vendor payload logging.
+
+    Tests of the privacy gate can still explicitly enable vendor DEBUG. Restore
+    the prior level after each test; never change production logging policy.
+    """
+    logger = logging.getLogger("tinytuya")
+    previous = logger.level
+    logger.setLevel(logging.WARNING)
+    try:
+        yield
+    finally:
+        logger.setLevel(previous)
 
 
 @pytest.fixture(autouse=True)

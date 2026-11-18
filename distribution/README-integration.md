@@ -1,12 +1,37 @@
 # PetSafe FreshFeed
 
-Owned connections expose stainless inserts and meal counter switches, a 0–10 brightness number, and a diagnostic raw quick-feed state. Setting writes require explicitly enabled controls and a subsequent matching device report; an unconfirmed write remains uncertain and is never retried automatically. community integration
+Owned connections expose stainless inserts and meal counter switches, a 0–10 brightness number, and a diagnostic raw quick-feed state. Setting writes require explicitly enabled controls and a subsequent matching device report; an unconfirmed write remains uncertain and is never retried automatically.
 
 <img src="assets/brand/readme.png" width="192" alt="Original teal and navy six-compartment feeder mark">
 
-Local Home Assistant integration, version **0.4.0**, for a compatible PetSafe
+Local Home Assistant integration, version **0.5.0**, for a compatible PetSafe
 FreshFeed feeder. This is independent community software, not affiliated with or
 endorsed by PetSafe. The logo is original artwork, not a manufacturer logo.
+
+## Compatibility
+
+| Component | Compatibility |
+|---|---|
+| Integration 0.5.0 | Standalone HA >= 2026.10.0, TinyTuya 1.20.0, protocol 3.5; Tuya Local is not required. |
+| Legacy and migration | Fingerprint-compatible Tuya Local 2026.10.0; migration only HA 2026.10.x. |
+| Card 0.4.0 | Aqara and raw modes are independent. |
+
+The card's five-minute warning is advisory only; saving remains allowed, and app
+pre-defrost parity is not established. Food estimates assume a filled tray and use
+compartment position, not measured food or consumption. Observed-meal statistics
+start at zero without backfill and exclude offline gaps and unsaved increments;
+abrupt power loss can lose recent increments. Diagnostics omit identifying data;
+Repairs advise without mutating retained intent. Guarded services reject missing or
+non-administrator contexts; automations are not automatically authorized.
+
+HACS does not automatically install root blueprints. Import these source URLs or
+manually copy the YAML into `/config/blueprints/automation/petsafe_freshfeed/`.
+These blueprints notify or update helpers only, not feeder commands. Source links do
+not assert publication or availability.
+
+- Low estimated meals: [source](https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/main/blueprints/automation/petsafe_freshfeed/low_estimated_meals.yaml) / [import](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fsudolulo%2Fpetsafe-freshfeed%2Fmain%2Fblueprints%2Fautomation%2Fpetsafe_freshfeed%2Flow_estimated_meals.yaml)
+- Feeder attention: [source](https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/main/blueprints/automation/petsafe_freshfeed/feeder_attention.yaml) / [import](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fsudolulo%2Fpetsafe-freshfeed%2Fmain%2Fblueprints%2Fautomation%2Fpetsafe_freshfeed%2Ffeeder_attention.yaml)
+- Refill/cleaning: [source](https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/main/blueprints/automation/petsafe_freshfeed/refill_cleaning_reminder.yaml) / [import](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fsudolulo%2Fpetsafe-freshfeed%2Fmain%2Fblueprints%2Fautomation%2Fpetsafe_freshfeed%2Frefill_cleaning_reminder.yaml)
 
 ## Two kinds of entries
 

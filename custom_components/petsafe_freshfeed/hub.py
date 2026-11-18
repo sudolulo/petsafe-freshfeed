@@ -23,6 +23,7 @@ unavailable rather than last-known.
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import re
 from datetime import datetime, timedelta
 
@@ -106,6 +107,11 @@ class FreshFeedHub:
         self.device_id = None
         self.snapshot = observed.snapshot({})
         self.events = []
+        self.observed_meals_dispensed_total = 0
+        self.counting_since = dt_util.utcnow()
+        self.statistics_reason = None
+        self._invalid_statistics_slice = None
+        self._unsupported_store = None
         self._report_values = {}
         self._report_epoch = None
         self.schedule = ScheduleState()
@@ -198,7 +204,35 @@ class FreshFeedHub:
     async def _async_load_store(self):
         stored = await self._store.async_load()
         self._store_loaded = True
+        if stored is not None and not isinstance(stored, list) and not (
+            isinstance(stored, dict) and type(stored.get("version")) is int
+            and stored["version"] in (2, 3)
+        ):
+            # Unknown schemas are opaque: even unrelated saves must not destroy them.
+            self._unsupported_store = deepcopy(stored)
+            self.observed_meals_dispensed_total = None
+            self.counting_since = None
+            self.statistics_reason = "invalid_statistics_payload"
+            return
         if isinstance(stored, dict):
+            if stored["version"] == 3:
+                total = stored.get("observed_meals_dispensed_total")
+                since_raw = stored.get("counting_since")
+                try:
+                    since = dt_util.parse_datetime(since_raw) if isinstance(since_raw, str) else None
+                except ValueError:
+                    # Well-formed ISO strings can still contain impossible dates.
+                    since = None
+                if type(total) is int and total >= 0 and since is not None and since.utcoffset() is not None:
+                    self.observed_meals_dispensed_total = total
+                    self.counting_since = since
+                else:
+                    self.observed_meals_dispensed_total = None
+                    self.counting_since = None
+                    self.statistics_reason = "invalid_statistics_payload"
+                    self._invalid_statistics_slice = deepcopy({
+                        key: stored[key] for key in ("observed_meals_dispensed_total", "counting_since") if key in stored
+                    })
             self.schedule = ScheduleState.from_dict(stored.get("schedule"))
             stored = stored.get("events")
         if isinstance(stored, list):
@@ -738,8 +772,16 @@ class FreshFeedHub:
             self._start_coordinator(self.bridge, self._binding_generation)
 
     def _serialize(self):
-        return {"version": 2, "events": [event.to_dict() for event in self.events],
+        if self._unsupported_store is not None:
+            return deepcopy(self._unsupported_store)
+        data = {"version": 3, "events": [event.to_dict() for event in self.events],
                 "schedule": self.schedule.to_dict()}
+        if self._invalid_statistics_slice is not None:
+            data.update(deepcopy(self._invalid_statistics_slice))
+        else:
+            data.update(observed_meals_dispensed_total=self.observed_meals_dispensed_total,
+                        counting_since=self.counting_since.isoformat())
+        return data
 
     def _refresh_states(self):
         if self._owned:
@@ -769,6 +811,8 @@ class FreshFeedHub:
     def _record_event(self, feed):
         self.events = observed.prune([*self.events, feed], now=dt_util.utcnow())
         if feed.kind == "dispensed":
+            if self.observed_meals_dispensed_total is not None:
+                self.observed_meals_dispensed_total += 1
             self.restore_last_fed(feed.at)
         self._store.async_delay_save(self._serialize, 10)
         for listener in tuple(self._event_listeners):

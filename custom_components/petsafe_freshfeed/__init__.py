@@ -46,6 +46,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             raise ConfigEntryNotReady("previous_coordinator_draining")
         retiring.pop(entry.entry_id, None)
 
+    from .repairs import FreshFeedRepairs, async_clear_offline_issue, async_reconcile_protocol_issue
+    # A persisted offline observation cannot survive a process restart.
+    async_clear_offline_issue(hass, entry)
+    async_reconcile_protocol_issue(hass, entry)
     hub = FreshFeedHub(hass, entry)
     entry.runtime_data = hub
     try:
@@ -58,6 +62,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if await hub.async_stop():
             retiring.pop(entry.entry_id, None)
         raise
+    repairs = FreshFeedRepairs(hass, entry)
+    def update_repairs():
+        repairs.update(connected=hub.snapshot.available, write_view=hub.write_view)
+    unsubscribe = hub.async_add_listener(update_repairs)
+    hub._repairs_stop = lambda: (unsubscribe(), repairs.stop())
+    update_repairs()
     from .services import async_register
     async_register(hass, entry)
     # Enabling controls in the options flow persists the store IDs; reload to apply them.
@@ -89,6 +99,8 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     from .migration_journal import MigrationJournal
     from .migration_state import MigrationFault
 
+    from .repairs import async_remove_entry_issues
+    async_remove_entry_issues(hass, entry.entry_id)
     await Store(hass, 1, f"{DOMAIN}.{entry.entry_id}").async_remove()
     try:
         await MigrationJournal(hass.config.config_dir, entry.entry_id).async_remove()
@@ -109,6 +121,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unloaded:
         unloaded = await hub.async_stop()
     if unloaded:
+        if hasattr(hub, "_repairs_stop"):
+            hub._repairs_stop()
         from .services import async_unregister
         async_unregister(hass, entry.entry_id)
     else:

@@ -206,8 +206,10 @@ async def test_owned_history_and_optional_reports(owned, hass_storage):
     assert hub.last_report == latest
     assert await ctx.hass.config_entries.async_unload(entry.entry_id)
     stored = hass_storage[f"{DOMAIN}.{entry.entry_id}"]["data"]
-    assert stored == {"version": 2, "events": [e.to_dict() for e in hub.events],
-                      "schedule": hub.schedule.to_dict()}
+    assert stored == {"version": 3, "events": [e.to_dict() for e in hub.events],
+                      "schedule": hub.schedule.to_dict(),
+                      "observed_meals_dispensed_total": 1,
+                      "counting_since": hub.counting_since.isoformat()}
     assert stored["schedule"]["value"] == OTHER_SCHEDULE
     assert ctx.device.control_frames() == []
 
@@ -248,9 +250,11 @@ async def test_owned_no_event_across_disconnect(owned):
     assert hub.snapshot.meals_left == 3
     # The first observation of a new connection seeds; it is never a transition.
     assert hub.events == [] and hub.last_fed is None
+    assert hub.observed_meals_dispensed_total == 0
     ctx.device.push_status({"145": 4})
     await until(lambda: hub.events)
     assert [e.kind for e in hub.events] == ["dispensed"]
+    assert hub.observed_meals_dispensed_total == 1
     assert hub.bridge is source and len(ctx.sources) == 1
     assert ctx.device.control_frames() == []
 
@@ -335,6 +339,32 @@ async def test_owned_retained_intent_requires_explicit_recovery(owned):
     record = await open_store(ctx.root, binding_id=leaf.id,
                               store_id=store_id).async_load_last_intent()
     assert record["operation_id"] == operation_id
+    assert ctx.device.control_frames() == [] and ctx.device.controls == []
+
+
+async def test_statistic_store_never_changes_witness(owned, hass_storage):
+    ctx = owned
+    entry = make_entry(ctx, owned_data())
+    leaf = leaf_for(ctx, entry)
+    store_id = await provision(ctx, leaf.id, retained=uuid4().hex)
+    ctx.hass.config_entries.async_update_entry(entry, data={
+        **entry.data, CONF_INTENT_STORE_ID: store_id, CONF_INTENT_BINDING_ID: leaf.id})
+    assert await ctx.hass.config_entries.async_setup(entry.entry_id)
+    hub = entry.runtime_data
+    await until(lambda: hub.adapter is not None)
+    def witness_bytes():
+        return {str(path.relative_to(ctx.root)): path.read_bytes()
+                for path in Path(ctx.root).rglob('*') if path.is_file()}
+    before = witness_bytes()
+    assert before
+    ctx.device.push_status({'145': 3})
+    await until(lambda: hub.observed_meals_dispensed_total == 1)
+    ctx.device.push_status({'145': 3, '14': 1})
+    await until(lambda: any(e.kind == 'meal_report' for e in hub.events))
+    assert hub.observed_meals_dispensed_total == 1
+    assert await ctx.hass.config_entries.async_unload(entry.entry_id)
+    assert hass_storage[f'{DOMAIN}.{entry.entry_id}']['data']['observed_meals_dispensed_total'] == 1
+    assert witness_bytes() == before
     assert ctx.device.control_frames() == [] and ctx.device.controls == []
 
 

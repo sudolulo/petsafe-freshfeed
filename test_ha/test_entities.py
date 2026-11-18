@@ -18,7 +18,8 @@ async def setup(hass, source_entry):
 
 
 def state(hass, domain, key):
-    return hass.states.get(f"{domain}.petsafe_freshfeed_{key}")
+    slug = {"meals_left": "estimated_meals_remaining", "food_level": "estimated_food_level", "out_of_food": "estimated_empty_tray", "firmware_a": "firmware_version", "firmware_b": "hardware_version"}.get(key, key)
+    return hass.states.get(f"{domain}.petsafe_freshfeed_{slug}")
 
 
 async def test_live_values(hass, source_entry, raw_entities):
@@ -29,7 +30,7 @@ async def test_live_values(hass, source_entry, raw_entities):
         for key, value in values.items():
             assert state(hass, domain, key).state == value
     entries = er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
-    assert len(entries) == 22
+    assert len(entries) == 23
     source_devices = dr.async_entries_for_config_entry(dr.async_get(hass), source_entry.entry_id)
     assert len(source_devices) == 1
     for entity in entries:
@@ -79,6 +80,22 @@ async def test_last_fed_restored(hass, source_entry, raw_entities):
     mock_restore_cache(hass, [State("sensor.petsafe_freshfeed_last_fed", stamp)])
     await setup(hass, source_entry)
     assert datetime.fromisoformat(state(hass, "sensor", "last_fed").state) == datetime.fromisoformat(stamp)
+
+
+async def test_statistics_store_is_authoritative_over_restore_cache(hass, source_entry, raw_entities):
+    mock_restore_cache(hass, [State('sensor.petsafe_freshfeed_observed_meals_dispensed_total', '999')])
+    entry = await setup(hass, source_entry)
+    total = state(hass, 'sensor', 'observed_meals_dispensed_total')
+    assert total.state == '0'
+    assert total.attributes['basis'] == 'ha_observed'
+    assert total.attributes['statistics_reason'] is None
+    assert total.attributes['coverage'] == 'Best-effort local observations; excludes offline gaps and unsaved increments.'
+    assert total.attributes['counting_since'] == entry.runtime_data.counting_since.isoformat()
+    registry = er.async_get(hass).async_get(total.entity_id)
+    assert registry.unique_id == f'{entry.entry_id}_observed_meals_dispensed_total'
+    assert registry.translation_key == 'observed_meals_dispensed_total'
+    assert total.name == 'PetSafe FreshFeed Observed meals dispensed total'
+    await hass.config_entries.async_unload(entry.entry_id)
 
 
 async def test_no_writable_platforms(hass, source_entry, raw_entities):

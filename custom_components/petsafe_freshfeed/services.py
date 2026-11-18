@@ -4,12 +4,41 @@ Observed acknowledgements describe device status, never physical success.
 Schedule admission compares the last pushed revision; an external writer's
 approximately one-second push latency remains a race, not a conditional write.
 """
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from homeassistant.exceptions import ServiceValidationError
+
 from .const import (
     BRIGHTNESS_MAX, BRIGHTNESS_MIN, DOMAIN, FEED_CANCEL_COMMAND, SETTING_BOOL_DPS,
     SETTING_BRIGHTNESS_DP, WRITE_OPERATION_DPS,
 )
 from .quick_feed import decode_quick_feed
 from .schedule_codec import MealEntry, ScheduleCodecError, decode_base64, encode_base64
+
+PUBLIC_REASONS = frozenset('invalid_request confirmation_required invalid_operation admin_required unknown_entry source_unavailable recovery_rejected stopped storage_fault integrity_fault busy recovery_in_progress intent_uncertain source_incompatible schedule_unknown stale_schedule quick_feed_active defrost_active feeding_active status_unavailable cancel_not_pending empty_tray already_refilled controls_disabled source_not_ready schedule_conflict'.split())
+
+
+def friendly_reason(reason: str) -> str:
+    """Fixed public copy only; never expose an adapter or transport value."""
+    if reason not in PUBLIC_REASONS:
+        return 'The request could not be confirmed. Check device and write status before trying again.'
+    if reason == 'admin_required':
+        return 'Use an administrator account.'
+    if reason in {'stale_schedule', 'schedule_conflict'}:
+        return 'Reload the schedule before saving again.'
+    if reason in {'storage_fault', 'integrity_fault'}:
+        return 'Check storage and write status; do not delete retained intent.'
+    if reason in {'intent_uncertain', 'recovery_in_progress', 'recovery_rejected'}:
+        return 'Inspect the feeder and use the existing recovery controls.'
+    return 'Check the feeder connection, controls and write status before trying again.'
+
+
+def service_error(reason: str) -> "ServiceValidationError":
+    """Translate public refusal codes without retaining arbitrary error data."""
+    from homeassistant.exceptions import ServiceValidationError
+    return ServiceValidationError(translation_domain=DOMAIN, translation_key=reason if reason in PUBLIC_REASONS else 'request_refused')
+
 
 _SAFE_STATUS = frozenset(('standby', 'done', 'last_meal'))
 _DEFROST_STATUS = frozenset(('defrost', 'defrosting'))
@@ -164,15 +193,14 @@ def recovery_allowed(context, evidence):
 
 def _validate(service, data):
     """Fixed failures, exact JSON types, no coercion or partial vector writes."""
-    from homeassistant.exceptions import ServiceValidationError
     fields = {'save_schedule': {'entry_id', 'entries', 'base_revision'},
               'command': {'entry_id', 'operation', 'confirmed'},
               'recover': {'entry_id', 'operation_id', 'session_id', 'confirmed'}}[service]
     if set(data) != fields or type(data.get('entry_id')) is not str:
-        raise ServiceValidationError('invalid_request')
+        raise service_error('invalid_request')
     if service == 'save_schedule':
         if type(data['base_revision']) is not str or type(data['entries']) is not list or len(data['entries']) > 10:
-            raise ServiceValidationError('invalid_request')
+            raise service_error('invalid_request')
         try:
             rows = []
             for row in data['entries']:
@@ -181,20 +209,19 @@ def _validate(service, data):
                 rows.append(MealEntry(**row))
             return encode_base64(rows)
         except (ValueError, TypeError):
-            raise ServiceValidationError('invalid_request') from None
+            raise service_error('invalid_request') from None
     if data['confirmed'] is not True:
-        raise ServiceValidationError('confirmation_required')
+        raise service_error('confirmation_required')
     if service == 'command' and (type(data['operation']) is not str or data['operation'] not in _COMMANDS):
-        raise ServiceValidationError('invalid_operation')
+        raise service_error('invalid_operation')
     if service == 'recover' and any(type(data[key]) is not str for key in ('operation_id', 'session_id')):
-        raise ServiceValidationError('invalid_request')
+        raise service_error('invalid_request')
     return None
 
 
 def async_register(hass, entry):
     """Register domain services once; route only to installed entry runtimes."""
     from homeassistant.core import SupportsResponse
-    from homeassistant.exceptions import ServiceValidationError
     entries = hass.data.setdefault(DOMAIN, {}).setdefault('service_entries', {})
     entries[entry.entry_id] = entry
 
@@ -202,16 +229,16 @@ def async_register(hass, entry):
         value = _validate(call.service, call.data)
         caller_id = call.context.user_id
         if not caller_id:
-            raise ServiceValidationError('admin_required')
+            raise service_error('admin_required')
         caller = await hass.auth.async_get_user(caller_id)
         if caller is None or not caller.is_admin:
-            raise ServiceValidationError('admin_required')
+            raise service_error('admin_required')
         target = entries.get(call.data['entry_id'])
         if target is None:
-            raise ServiceValidationError('unknown_entry')
+            raise service_error('unknown_entry')
         adapter = getattr(target.runtime_data, 'adapter', None)
         if adapter is None:
-            raise ServiceValidationError('source_unavailable')
+            raise service_error('source_unavailable')
         if call.service == 'save_schedule':
             result = await adapter.async_submit('schedule', {'1': value}, base_revision=call.data['base_revision'])
         elif call.service == 'command':
@@ -220,10 +247,10 @@ def async_register(hass, entry):
         else:
             resolved = await adapter.async_recover(call.data['operation_id'], call.data['session_id'], confirmed=True)
             if not resolved:
-                raise ServiceValidationError('recovery_rejected')
+                raise service_error('recovery_rejected')
             return {'resolved': True}
         if not result['admitted']:
-            raise ServiceValidationError(result['reason'])
+            raise service_error(result['reason'])
         return result
 
     for service in ('save_schedule', 'command', 'recover'):

@@ -672,13 +672,16 @@ def test_runtime_gates_do_no_file_io(monkeypatch):
 # Logging and secret hygiene
 
 
-async def test_debug_logging_refuses_before_client_construction(hass, monkeypatch, no_tuya_local):
+async def test_debug_logging_refuses_before_client_construction(hass, monkeypatch, no_tuya_local, caplog):
     built = []
 
     def factory(conn):
         built.append(conn)
         return SynthClient()
     monkeypatch.setattr(owned_source, "check_loaded_client", lambda api: True)
+    # This test deliberately exercises inheritance from root, unlike the
+    # suite's safe vendor baseline under pytest DEBUG capture.
+    caplog.set_level(logging.NOTSET, logger="tinytuya")
     for name in ("tinytuya", "tinytuya.core.XenonDevice", ""):  # "" is the root logger
         logger = logging.getLogger(name)
         previous = logger.level

@@ -116,11 +116,81 @@ async def test_write_services_reject_non_admin_callers(hass, service, data, call
     from homeassistant.core import Context
     user = None if caller == 'unknown' else SimpleNamespace(is_admin=False)
     hass.auth.async_get_user = AsyncMock(return_value=user)
-    with pytest.raises(ServiceValidationError, match='admin_required'):
+    with pytest.raises(ServiceValidationError) as caught:
         await hass.services.async_call('petsafe_freshfeed', service, data, blocking=True,
                                        context=Context(user_id=None if caller == 'missing' else caller))
+    assert caught.value.translation_key == 'admin_required'
+    assert caught.value.translation_domain == 'petsafe_freshfeed'
     adapter.async_submit.assert_not_awaited()
     adapter.async_recover.assert_not_awaited()
+
+
+@pytest.mark.parametrize('reason,expected', [
+    ('stale_schedule', 'Reload the schedule before saving again.'),
+    ('schedule_conflict', 'Reload the schedule before saving again.'),
+    ('storage_fault', 'Check storage and write status; do not delete retained intent.'),
+    ('integrity_fault', 'Check storage and write status; do not delete retained intent.'),
+    ('intent_uncertain', 'Inspect the feeder and use the existing recovery controls.'),
+    ('recovery_in_progress', 'Inspect the feeder and use the existing recovery controls.'),
+    ('recovery_rejected', 'Inspect the feeder and use the existing recovery controls.'),
+    ('admin_required', 'Use an administrator account.'),
+    ('busy', 'Check the feeder connection, controls and write status before trying again.'),
+    ('controls_disabled', 'Check the feeder connection, controls and write status before trying again.'),
+    ('SENTINEL-private-value', 'The request could not be confirmed. Check device and write status before trying again.'),
+])
+async def test_service_refusals_use_fixed_translations(hass, reason, expected):
+    from homeassistant.core import Context
+    from custom_components.petsafe_freshfeed.services import async_register
+    adapter = SimpleNamespace(async_submit=AsyncMock(return_value={'admitted': False, 'reason': reason}))
+    async_register(hass, SimpleNamespace(entry_id='a', runtime_data=SimpleNamespace(adapter=adapter)))
+    hass.auth.async_get_user = AsyncMock(return_value=SimpleNamespace(is_admin=True))
+    with pytest.raises(ServiceValidationError) as caught:
+        await hass.services.async_call('petsafe_freshfeed', 'save_schedule',
+            {'entry_id': 'a', 'entries': [], 'base_revision': 'SENTINEL-revision'},
+            blocking=True, context=Context(user_id='admin'))
+    assert caught.value.translation_key == (reason if not reason.startswith('SENTINEL') else 'request_refused')
+    assert caught.value.translation_domain == 'petsafe_freshfeed'
+    assert not caught.value.translation_placeholders
+    assert await resolved_exception_text(hass, caught.value) == expected
+    assert 'SENTINEL' not in str(caught.value)
+    adapter.async_submit.assert_awaited_once_with('schedule', {'1': '/w=='}, base_revision='SENTINEL-revision')
+
+
+async def resolved_exception_text(hass, error):
+    """Resolve the exception using Home Assistant's translation catalog."""
+    from homeassistant.helpers.translation import async_get_translations
+    translations = await async_get_translations(hass, 'en', 'exceptions',
+                                                integrations={error.translation_domain})
+    key = f'component.{error.translation_domain}.exceptions.{error.translation_key}.message'
+    return translations[key].format(**(error.translation_placeholders or {}))
+
+
+@pytest.mark.parametrize('key,placeholders,expected', [
+    ('setting_refused', {'reason': 'Check the feeder connection, controls and write status before trying again.'},
+     'Setting refused: Check the feeder connection, controls and write status before trying again.'),
+    ('setting_uncertain', None, 'The setting could not be confirmed. Inspect the feeder and write status.'),
+    ('invalid_setting', None, 'The setting value is invalid.'),
+    ('controls_disabled', None, 'Check the feeder connection, controls and write status before trying again.'),
+])
+async def test_setting_exceptions_resolve_fixed_text(hass, key, placeholders, expected):
+    from homeassistant.exceptions import HomeAssistantError
+    error = HomeAssistantError(translation_domain='petsafe_freshfeed', translation_key=key,
+                               translation_placeholders=placeholders)
+    assert await resolved_exception_text(hass, error) == expected
+
+
+async def test_validation_precedes_admin_and_does_not_leak(hass):
+    from custom_components.petsafe_freshfeed.services import async_register
+    adapter = SimpleNamespace(async_submit=AsyncMock())
+    async_register(hass, SimpleNamespace(entry_id='a', runtime_data=SimpleNamespace(adapter=adapter)))
+    hass.auth.async_get_user = AsyncMock()
+    with pytest.raises(ServiceValidationError) as caught:
+        await hass.services.async_call('petsafe_freshfeed', 'command',
+            {'entry_id': 'SENTINEL', 'operation': 'feed', 'confirmed': True, 'extra': 'SENTINEL'}, blocking=True)
+    assert caught.value.translation_key == 'invalid_request'
+    assert 'SENTINEL' not in str(caught.value)
+    hass.auth.async_get_user.assert_not_awaited()
+    adapter.async_submit.assert_not_awaited()
 
 
 @pytest.mark.parametrize('operation', ['feed', 'cancel'])
@@ -157,3 +227,23 @@ async def test_services_strict_payload_routing_and_entry_lifetime(hass, operatio
     assert hass.services.has_service(domain, 'command')
     async_unregister(hass, 'b')
     assert not hass.services.has_service(domain, 'command')
+
+
+async def test_near_meal_schedule_admitted_under_normal_rules(hass, freezer):
+    """A meal two minutes away is advisory in the card only; the service applies no timing rule."""
+    from homeassistant.core import Context
+    from custom_components.petsafe_freshfeed.services import async_register
+    await hass.config.async_set_time_zone('UTC')
+    freezer.move_to('2026-11-18T07:58:00+00:00')
+    adapter = SimpleNamespace(async_submit=AsyncMock(return_value={'admitted': True}))
+    async_register(hass, SimpleNamespace(entry_id='a', runtime_data=SimpleNamespace(adapter=adapter)))
+    hass.auth.async_get_user = AsyncMock(return_value=SimpleNamespace(is_admin=True))
+    entries = [{'weekmask': 127, 'hour': 8, 'minute': 0, 'enabled': True, 'audible': False}]
+    await hass.services.async_call('petsafe_freshfeed', 'save_schedule',
+        {'entry_id': 'a', 'entries': entries, 'base_revision': 'digest'},
+        blocking=True, context=Context(user_id='admin'))
+    adapter.async_submit.assert_awaited_once()
+    operation, dps = adapter.async_submit.await_args.args
+    assert operation == 'schedule'
+    assert set(dps) == {'1'}
+    assert adapter.async_submit.await_args.kwargs == {'base_revision': 'digest'}

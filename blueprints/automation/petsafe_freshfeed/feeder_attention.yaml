@@ -1,0 +1,69 @@
+blueprint:
+  name: FreshFeed attention notifications
+  description: >-
+    Notify for continuous offline observations (15 minutes), a fault, or uncertain
+    write status. The attention_reason variable identifies the cause for your
+    notification actions. Missing/startup states do not alert. Inspect the feeder;
+    this blueprint never retries or clears uncertainty. Choose notification actions only.
+  domain: automation
+  homeassistant:
+    min_version: '2026.10.0'
+  source_url: https://github.com/sudolulo/petsafe-freshfeed/blob/main/blueprints/automation/petsafe_freshfeed/feeder_attention.yaml
+  input:
+    connected_entity:
+      name: Connected observations
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+    fault_entity:
+      name: Feeder fault
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+    write_status_entity:
+      name: Write status
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+    notification_action:
+      name: Notification actions (attention_reason describes the cause)
+      selector:
+        action: {}
+mode: queued
+max: 10
+triggers:
+  - trigger: state
+    entity_id: !input connected_entity
+    from: 'on'
+    to: 'off'
+    for:
+      minutes: 15
+    id: offline
+  - trigger: state
+    entity_id: !input fault_entity
+    from: 'off'
+    to: 'on'
+    id: fault
+  - trigger: state
+    entity_id: !input write_status_entity
+    to: uncertain
+    id: uncertainty
+conditions:
+  - condition: template
+    value_template: >-
+      {{ trigger.from_state is not none and
+         trigger.from_state.state not in ['unknown', 'unavailable', ''] and
+         not trigger.from_state.attributes.get('restored', false) and
+         not trigger.to_state.attributes.get('restored', false) }}
+actions:
+  - variables:
+      attention_reason: >-
+        {{ {'offline': 'Feeder observations unavailable for 15 minutes',
+            'fault': 'Feeder fault reported',
+            'uncertainty': 'Feeder confirmation required; inspect the feeder'}[trigger.id] }}
+  - choose:
+      - conditions: '{{ true }}'
+        sequence: !input notification_action

@@ -1,6 +1,19 @@
 # Changelog
 
-## Integration [0.4.0] - Unreleased (draft)
+## Integration [0.5.0] - 2026-11-18
+
+### Added
+- Privacy-limited diagnostics, non-mutating Repairs, observed feeding device triggers,
+  best-effort observed-meal statistics and three importable notification blueprints.
+- Translated entity names and errors without changing existing identities.
+
+## Card [0.4.0] - 2026-11-18
+
+### Added
+- Lazy visual editor with manual configuration fallback, accessible dialogs, friendly
+  history and errors, and a five-minute advisory for schedule edits.
+
+## Integration [0.4.0] - 2026-11-18
 
 ### Added
 - Standalone entries: Tuya Local is not required. A PetSafe-owned local source keeps

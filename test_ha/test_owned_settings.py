@@ -24,7 +24,7 @@ from custom_components.petsafe_freshfeed.const import (
     OWNED_SETTING_ENTITIES,
 )
 from custom_components.petsafe_freshfeed.local_source import ACK_DPS, DeviceReport, DispatchMark
-from custom_components.petsafe_freshfeed.services import acknowledgement, recovery_allowed
+from custom_components.petsafe_freshfeed.services import acknowledgement, recovery_allowed, friendly_reason
 from custom_components.petsafe_freshfeed.write_adapter import IntentContext, RecoveryEvidence
 from test_owned_hub import (  # noqa: F401 - pytest fixtures by name
     leaf_for, make_entry, owned, owned_data, provision, setup, until,
@@ -121,6 +121,67 @@ async def test_owned_creates_setting_entities_with_observed_state(owned):
     assert ctx.device.control_frames() == []
 
 
+async def test_owned_settings_are_translated_config_entities(owned):
+    entry = await setup(owned, owned_data())
+    entities = [e for platform in owned.hass.data["entity_components"].values()
+                for e in platform.entities if getattr(e, "hub", None) is entry.runtime_data]
+    for key, icon in {"stainless_inserts": "mdi:silverware", "meal_counter": "mdi:counter",
+                      "brightness_setting": "mdi:brightness-6"}.items():
+        entity = next(e for e in entities if e.key == key)
+        assert entity.entity_category == "config"
+        assert entity.icon == icon
+        assert "_attr_name" not in entity.__dict__
+        assert entity.translation_key == key
+    for key, name in {"stainless_inserts": "Stainless inserts",
+                      "meal_counter": "Meal counter"}.items():
+        entity = next(e for e in entities if e.key == key)
+        assert entity.name == name
+    quick = next(e for e in entities if e.key == "quick_feed_state")
+    assert quick.name == "Quick feed state"
+    assert quick.options is None
+    assert quick.native_value == "EAAA"
+    assert owned.device.control_frames() == []
+
+
+async def test_existing_brightness_registry_identity_survives_translation(owned):
+    entry = make_entry(owned, owned_data())
+    registry = er.async_get(owned.hass)
+    old = registry.async_get_or_create(
+        'number', DOMAIN, f'{entry.entry_id}_brightness_setting',
+        suggested_object_id='petsafe_freshfeed_brightness',
+        config_entry=entry, original_name='Brightness setting')
+    registry.async_update_entity(old.entity_id, name='My display')
+    assert old.entity_id == 'number.petsafe_freshfeed_brightness'
+    assert await owned.hass.config_entries.async_setup(entry.entry_id)
+    await owned.hass.async_block_till_done()
+    assert await owned.hass.config_entries.async_reload(entry.entry_id)
+    await owned.hass.async_block_till_done()
+    current = registry.async_get(old.entity_id)
+    assert current.id == old.id
+    assert current.unique_id == old.unique_id
+    assert current.name == 'My display'
+    assert current.original_name == 'Display brightness'
+    assert entity_id(owned.hass, entry, 'brightness_setting') == old.entity_id
+    assert owned.device.control_frames() == []
+
+
+async def test_setting_unknown_reason_is_not_exposed(owned):
+    from unittest.mock import AsyncMock
+    from custom_components.petsafe_freshfeed.owned_setting import OwnedSetting
+    entry = await setup(owned, owned_data())
+    hub = entry.runtime_data
+    hub.adapter = __import__('types').SimpleNamespace(async_submit=AsyncMock(
+        return_value={"admitted": False, "reason": "SENTINEL-private-value"}))
+    try:
+        with pytest.raises(HomeAssistantError) as caught:
+            await OwnedSetting(hub, entry.entry_id, "stainless_inserts").async_set(False)
+        assert caught.value.translation_placeholders == {"reason": friendly_reason("unknown")}
+        assert "SENTINEL" not in str(caught.value)
+        assert owned.device.control_frames() == []
+    finally:
+        hub.adapter = None
+
+
 async def test_legacy_backend_has_no_setting_entities(hass, source_entry, raw_entities, loaded_source):
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_SOURCE_ENTRY_ID: source_entry.entry_id})
     entry.add_to_hass(hass)
@@ -196,7 +257,7 @@ async def test_unacknowledged_setting_is_uncertain_without_retry(owned, monkeypa
     with pytest.raises(HomeAssistantError) as caught:
         await call(hass, "switch", "turn_on", target)
     assert caught.value.translation_key == "setting_refused"
-    assert caught.value.translation_placeholders == {"reason": "intent_uncertain"}
+    assert caught.value.translation_placeholders == {"reason": friendly_reason("intent_uncertain")}
     assert len(ctx.device.control_frames()) == 1
 
 
@@ -241,7 +302,7 @@ async def test_unchanged_setting_obeys_admission(owned, condition, reason, monke
         assert caught.value.translation_key == reason
     else:
         assert caught.value.translation_key == "setting_refused"
-        assert caught.value.translation_placeholders == {"reason": reason}
+        assert caught.value.translation_placeholders == {"reason": friendly_reason(reason)}
     assert ctx.device.control_frames() == [] and ctx.device.controls == []
 
 
@@ -282,7 +343,7 @@ async def test_setting_refused_during_feed_activity(owned, dps, reason):
     with pytest.raises(HomeAssistantError) as caught:
         await call(ctx.hass, "switch", "turn_off", entity_id(ctx.hass, entry, "meal_counter"))
     assert caught.value.translation_key == "setting_refused"
-    assert caught.value.translation_placeholders == {"reason": reason}
+    assert caught.value.translation_placeholders == {"reason": friendly_reason(reason)}
     assert ctx.device.control_frames() == []
 
 

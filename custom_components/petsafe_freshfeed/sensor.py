@@ -10,7 +10,7 @@ from .entity import FreshFeedEntity
 SENSORS = (
     "status", "meals_left", "compartment", "food_level", "last_fed",
     "last_feed_result", "meals_today", "next_meal", "defrost_remaining",
-    "brightness", "firmware_a", "firmware_b", "last_report", "schedule", "quick_feed", "write_status", "history",
+    "brightness", "firmware_a", "firmware_b", "last_report", "schedule", "quick_feed", "write_status", "history", "observed_meals_dispensed_total",
 )
 
 
@@ -23,7 +23,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 class OwnedQuickFeedState(FreshFeedEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_name = "Quick feed state"
 
     @property
     def native_value(self):
@@ -40,9 +39,15 @@ class FreshFeedSensor(FreshFeedEntity, RestoreSensor):
         elif key in {"food_level", "last_feed_result"}:
             self._attr_device_class = SensorDeviceClass.ENUM
             self._attr_options = ["high", "low", "empty"] if key == "food_level" else ["dispensed", "refilled", "skipped_empty", "skipped_fault"]
+        elif key == "quick_feed":
+            self._attr_device_class = SensorDeviceClass.ENUM
+            self._attr_options = ["idle", "pending", "feeding", "ready", "failed"]
         elif key == "defrost_remaining":
             self._attr_device_class = SensorDeviceClass.DURATION
             self._attr_native_unit_of_measurement = UnitOfTime.MINUTES
+        if key == "observed_meals_dispensed_total":
+            self._attr_native_unit_of_measurement = "meals"
+            self._attr_state_class = SensorStateClass.TOTAL_INCREASING
         if key == "meals_left":
             self._attr_native_unit_of_measurement = "meals"
             self._attr_state_class = SensorStateClass.MEASUREMENT
@@ -58,7 +63,15 @@ class FreshFeedSensor(FreshFeedEntity, RestoreSensor):
                 self.hub.restore_last_fed(restored)
 
     @property
+    def available(self):
+        if self.key == "observed_meals_dispensed_total":
+            return self.hub.observed_meals_dispensed_total is not None
+        return super().available
+
+    @property
     def native_value(self):
+        if self.key == "observed_meals_dispensed_total":
+            return self.hub.observed_meals_dispensed_total
         if self.key == 'history':
             return len(self.hub.events)
         if self.key == 'quick_feed':
@@ -77,6 +90,11 @@ class FreshFeedSensor(FreshFeedEntity, RestoreSensor):
 
     @property
     def extra_state_attributes(self):
+        if self.key == "observed_meals_dispensed_total":
+            since = self.hub.counting_since
+            return {"basis": "ha_observed", "coverage": "Best-effort local observations; excludes offline gaps and unsaved increments.",
+                    "counting_since": since.isoformat() if since else None,
+                    "statistics_reason": self.hub.statistics_reason}
         if self.key == 'history':
             return {'basis': 'ha_observed', 'events': [dict(source_dp=None, report_value=None, **{k: v for k, v in event.to_dict().items() if k not in {'source_dp', 'report_value'}}) if event.source_dp is None else event.to_dict() for event in self.hub.events], 'dp151_supported': False}
         if self.key == 'next_meal':

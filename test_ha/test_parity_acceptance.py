@@ -48,14 +48,16 @@ async def test_schedule_verified_restart_recovery_and_restart_again(pinned):
         return await ctx.hass.services.async_call(
             'petsafe_freshfeed', service, data,
             context=Context(user_id=ctx.user.id), blocking=True, return_response=True)
-    with pytest.raises(ServiceValidationError, match='schedule_unknown'):
+    with pytest.raises(ServiceValidationError) as caught:
         await service('save_schedule', {'entry_id': entry.entry_id, 'entries': [], 'base_revision': 'unknown'})
+    assert caught.value.translation_key == 'schedule_unknown'
     assert not ctx.writes
     _queue_reports(SimpleNamespace(bridge=hub.bridge), {'1': '/w=='})
     revision = hub.schedule.revision
     _queue_reports(SimpleNamespace(bridge=hub.bridge), {'1': 'fwgAAQE='})
-    with pytest.raises(ServiceValidationError, match='stale_schedule'):
+    with pytest.raises(ServiceValidationError) as caught:
         await service('save_schedule', {'entry_id': entry.entry_id, 'entries': [], 'base_revision': revision})
+    assert caught.value.translation_key == 'stale_schedule'
     assert not ctx.writes
     # The HA service routes to the adapter; the matching post-dispatch DP1 echo verifies it.
     hub.schedule = hub.schedule.disconnected()
@@ -90,9 +92,10 @@ async def test_schedule_verified_restart_recovery_and_restart_again(pinned):
         assert view['operation_id'] == first['operation_id']
         assert view['session_id'] != first['session_id']
         assert len(ctx.writes) == 1
-        with pytest.raises(ServiceValidationError, match='recovery_rejected'):
+        with pytest.raises(ServiceValidationError) as caught:
             await service('recover', {'entry_id': entry.entry_id, 'operation_id': view['operation_id'],
                                       'session_id': first['session_id'], 'confirmed': True})
+        assert caught.value.translation_key == 'recovery_rejected'
         if iteration:
             break
         request = ctx.hass.async_create_task(service('recover', {
