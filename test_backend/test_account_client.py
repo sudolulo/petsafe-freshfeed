@@ -1664,7 +1664,7 @@ class DiagnosticLabelTests(GuardedTestCase):
         self.assertEqual([m.name for m in ac.Stage],
                          ["NONE", "SETUP", "TOKEN", "LOGIN", "HOMES", "DEVICES", "RESULT"])
         self.assertEqual([m.name for m in ac.Reason], [
-            "NONE", "SERVER_ERROR_CODE", "SERVER_ERROR_FLAG", "OUTER_SHAPE", "SEAL", "DECODE",
+            "NONE", "SERVER_ERROR_CODE", "SESSION_REJECTED", "SERVER_ERROR_FLAG", "OUTER_SHAPE", "SEAL", "DECODE",
             "UNWRAP_DEPTH", "MISSING_FIELD", "FIELD_TYPE", "NO_LIST", "RECORD_SHAPE",
             "RECORD_ID", "RECORD_PRODUCT", "PAGINATION", "DIRECTED_URL", "DIRECTED_CONFLICT",
             "LIMIT", "BUDGET", "TIMEOUT", "CANCELLED", "PROFILE", "WALK_BOUNDS",
@@ -2481,6 +2481,18 @@ class DiscoverTests(GuardedTestCase):
                                      _exchange=exchange, _session=SyntheticProfile(), **kwargs)
         self.assertEqual((out.getvalue(), err.getvalue()), ("", ""))
         return found, exchange
+
+    def test_discovery_rejects_unrestorable_login_secrets(self):
+        for key in ("sid", "ecode"):
+            for value in ("bad value", "bad\nvalue", "x" * 1025):
+                with self.subTest(key=key, value=value):
+                    login = {"sid": sf.SID, "ecode": sf.ECODE, "uid": sf.UID}
+                    login[key] = value
+                    found, exchange = self.discover(FakeServer(login=login))
+                    self.assertIs(found.outcome, ac.Outcome.PROTOCOL_ERROR)
+                    self.assertIsNone(found.session)
+                    self.assertEqual([op for op, *_ in exchange.operations()],
+                                     ["TOKEN", "PASSWORD_LOGIN"])
 
     def test_public_surface(self):
         account = account_pkg()

@@ -6,15 +6,16 @@ from unittest.mock import patch
 import pytest
 from custom_components.petsafe_freshfeed.schedule_codec import MealEntry, encode
 
-from custom_components.petsafe_freshfeed.tuya_bridge import DeviceReport
+from custom_components.petsafe_freshfeed.local_source import DeviceReport
 from custom_components.petsafe_freshfeed.schedule_state import ScheduleState
-from test_hub import make_hub
+from test_hub import owned_hub, report
+from owned_test_support import until
 from custom_components.petsafe_freshfeed.observed import FeedEvent
 from custom_components.petsafe_freshfeed.sensor import FreshFeedSensor
 
 
-async def test_retention_on_load_preserves_schedule_and_last_fed(hass, source_entry, raw_entities, hass_storage):
-    hub = make_hub(hass, source_entry)
+async def test_retention_on_load_preserves_schedule_and_last_fed(hass, owned, hass_storage):
+    hub = owned_hub(owned)
     now = datetime.now(timezone.utc)
     expired = FeedEvent("dispensed", 2, now - timedelta(days=8))
     recent = [FeedEvent("meal_report", None, now - timedelta(seconds=i), 14, 1)
@@ -42,8 +43,8 @@ async def test_retention_on_load_preserves_schedule_and_last_fed(hass, source_en
     assert persisted.observed_at == cached.observed_at
 
 
-async def test_quiet_tick_expires_history_and_persists_without_new_event(hass, source_entry, raw_entities):
-    hub = make_hub(hass, source_entry)
+async def test_quiet_tick_expires_history_and_persists_without_new_event(hass, owned):
+    hub = owned_hub(owned)
     await hub.async_start()
     now = datetime.now(timezone.utc)
     event = FeedEvent("dispensed", 2, now - timedelta(days=7) + timedelta(seconds=30))
@@ -65,8 +66,8 @@ async def test_quiet_tick_expires_history_and_persists_without_new_event(hass, s
         await hub.async_stop()
 
 
-async def test_reports_are_transitions_with_observation_timestamp(hass, source_entry, raw_entities):
-    hub = make_hub(hass, source_entry)
+async def test_reports_are_transitions_with_observation_timestamp(hass, owned):
+    hub = owned_hub(owned)
     await hub.async_start()
     at = datetime.now(timezone.utc)
     for seq, dps in enumerate(({"14": 0, "150": 0}, {"14": 1}, {"14": 1}, {"14": 4}, {"14": 5}, {"150": 1})):
@@ -78,38 +79,27 @@ async def test_reports_are_transitions_with_observation_timestamp(hass, source_e
     restarted = type(hub)(hass, hub.entry)
     await restarted.async_start()
     assert [event.kind for event in restarted.events] == ["meal_report", "meal_report", "all_meals_report", "interrupted"]
-    restarted._device_report(DeviceReport(2, 1, at, {"14": 2}))
+    restarted._device_report(DeviceReport(restarted.bridge.epoch + 1, 1, at, {"14": 2}))
     assert len(restarted.events) == 4
     await restarted.async_stop()
 
 
-async def test_replacement_bridge_first_reports_do_not_create_transitions(hass, source_entry, raw_entities, loaded_source):
-    import asyncio
-    from types import SimpleNamespace
-    from homeassistant.config_entries import ConfigEntryState
-    from conftest import DEVICE_ID
-    from test_tuya_bridge import Api
-
-    hub = make_hub(hass, source_entry)
+async def test_reconnect_first_reports_do_not_create_transitions(hass, owned):
+    hub = owned_hub(owned)
+    owned.device.dps['14'] = 0
     await hub.async_start()
     try:
-        old_bridge = hub.bridge
-        loaded_source._api._cache_response({'dps': {'14': 0, '150': 0}})
-        await hass.async_block_till_done()
-        assert hub._report_epoch == 1
-        source_entry.mock_state(hass, ConfigEntryState.NOT_LOADED)
-        await hass.async_block_till_done()
-        new_api = Api()
-        hass.data['tuya_local'][DEVICE_ID] = {'device': SimpleNamespace(_api=new_api, _api_lock=asyncio.Lock())}
-        source_entry.mock_state(hass, ConfigEntryState.LOADED)
-        await hass.async_block_till_done()
-        assert hub.bridge is not old_bridge
-        new_api._cache_response({'dps': {'14': 1, '150': 1}})
-        await hass.async_block_till_done()
-        assert hub._report_epoch == 1
+        await report(owned, hub, {'14': 0, '150': 0})
+        epoch = hub._report_epoch
+        owned.device.refuse = True
+        owned.device.sockets[-1].drop()
+        await until(lambda: not hub.snapshot.available)
+        owned.device.dps.update({'14': 1, '150': 1})
+        owned.device.refuse = False
+        await until(lambda: hub.snapshot.available)
+        assert hub._report_epoch != epoch
         assert hub.events == []
-        new_api._cache_response({'dps': {'14': 2, '150': 0}})
-        await hass.async_block_till_done()
+        await report(owned, hub, {'14': 2, '150': 0})
         assert [(event.kind, event.report_value) for event in hub.events] == [('meal_report', 2)]
     finally:
         await hub.async_stop()
@@ -119,10 +109,10 @@ async def test_replacement_bridge_first_reports_do_not_create_transitions(hass, 
     (2, 30, "2026-03-08T09:00:00+00:00", "2026-03-09T09:30:00+00:00"),
     (1, 30, "2026-11-01T08:30:00+00:00", "2026-11-01T09:30:00+00:00"),
 ])
-async def test_next_meal_dst_in_ha_timezone(hass, source_entry, raw_entities, hour, minute, now, expected):
+async def test_next_meal_dst_in_ha_timezone(hass, owned, hour, minute, now, expected):
     await hass.config.async_set_time_zone("America/Los_Angeles")
-    hass.states.async_set(raw_entities[145], "unknown")
-    hub = make_hub(hass, source_entry)
+    hub = owned_hub(owned)
+    owned.device.dps['145'] = 2
     await hub.async_start()
     try:
         at = datetime.fromisoformat(now)
@@ -131,7 +121,7 @@ async def test_next_meal_dst_in_ha_timezone(hass, source_entry, raw_entities, ho
         with patch("custom_components.petsafe_freshfeed.hub.dt_util.utcnow", return_value=at):
             assert sensor.native_value == datetime.fromisoformat(expected)
             assert sensor.extra_state_attributes == {
-                "basis": "schedule", "source_state": "current", "observed_at": at.isoformat(), "reason": None}
+                "basis": "schedule", "source_state": "current", "provenance": "lan", "observed_at": at.isoformat(), "reason": None}
             hub.schedule = hub.schedule.disconnected()
             assert sensor.native_value == datetime.fromisoformat(expected)
             assert sensor.extra_state_attributes["source_state"] == "last_known"
@@ -139,8 +129,8 @@ async def test_next_meal_dst_in_ha_timezone(hass, source_entry, raw_entities, ho
         await hub.async_stop()
 
 
-async def test_history_schema_and_report_does_not_double_count_dispense(hass, source_entry, raw_entities):
-    hub = make_hub(hass, source_entry)
+async def test_history_schema_and_report_does_not_double_count_dispense(hass, owned):
+    hub = owned_hub(owned)
     await hub.async_start()
     try:
         at = datetime.now(timezone.utc)
@@ -163,9 +153,9 @@ async def test_history_schema_and_report_does_not_double_count_dispense(hass, so
 
 
 @pytest.mark.parametrize("wire", [None, "/w==", "fwgAAAE="])
-async def test_no_planned_occurrence_for_unknown_empty_disabled(hass, source_entry, raw_entities, wire):
-    hass.states.async_set(raw_entities[145], "unknown")
-    hub = make_hub(hass, source_entry)
+async def test_no_planned_occurrence_for_unknown_empty_disabled(hass, owned, wire):
+    hub = owned_hub(owned)
+    owned.device.dps['145'] = 2
     await hub.async_start()
     try:
         if wire is not None:
@@ -176,11 +166,11 @@ async def test_no_planned_occurrence_for_unknown_empty_disabled(hass, source_ent
         await hub.async_stop()
 
 
-async def test_next_meal_uses_cached_schedule_not_history(hass, source_entry, raw_entities):
-    hub = make_hub(hass, source_entry)
+async def test_next_meal_uses_cached_schedule_not_history(hass, owned):
+    hub = owned_hub(owned)
+    owned.device.dps['145'] = 2
     await hub.async_start()
     hub.schedule = ScheduleState().with_report("fwgAAQE=", datetime(2026, 1, 1, tzinfo=timezone.utc)).disconnected()
-    hass.states.async_set(raw_entities[145], "unknown")
     await hass.async_block_till_done()
     with patch("custom_components.petsafe_freshfeed.hub.dt_util.utcnow", return_value=datetime(2026, 1, 1, 7, tzinfo=timezone.utc)):
         assert hub.next_meal == datetime(2026, 1, 1, 16, tzinfo=timezone.utc)
@@ -188,10 +178,9 @@ async def test_next_meal_uses_cached_schedule_not_history(hass, source_entry, ra
         hub._record_event(FeedEvent("dispensed", 2, datetime.now(timezone.utc)))
         assert hub.schedule == before
         assert hub.next_meal == datetime(2026, 1, 1, 16, tzinfo=timezone.utc)
-        hass.states.async_set(raw_entities[145], "6")
-        await hass.async_block_till_done()
+        hub._device_report(DeviceReport(hub.bridge.epoch, 100, datetime.now(timezone.utc), {'145': 6}))
         assert hub.next_meal is None
         assert FreshFeedSensor(hub, hub.entry.entry_id, "next_meal").extra_state_attributes == {
-            "basis": "schedule", "source_state": "last_known",
+            "basis": "schedule", "source_state": "last_known", "provenance": "lan",
             "observed_at": before.observed_at.isoformat(), "reason": "empty_tray"}
     await hub.async_stop()

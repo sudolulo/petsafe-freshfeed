@@ -1,5 +1,20 @@
 # Changelog
 
+## Integration [0.5.1] - 2026-11-18
+
+### Removed
+- Retired the borrowed backend, setup and migration, its dependency and raw profile.
+
+### Fixed
+- Preserve owned identities and storage while offering app-free recovery. Local abandonment clears uncertainty without proving execution; strict recovery remains separate.
+- Add on-demand read-only cloud data and Fully local mode. Fresh local evidence can permit controls when quick-feed state was never reported, with residual risk of an extra meal.
+- Correct standalone documentation and empty-feeder recovery.
+
+## Card [0.4.1] - 2026-11-18
+
+### Fixed
+- Release a matching operation/session latch after local abandonment and show execution unknown. The 0.5.0 backend retains the strict fallback.
+
 ## Integration [0.5.0] - 2026-11-18
 
 ### Added

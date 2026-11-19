@@ -3,11 +3,11 @@ import asyncio
 from unittest.mock import patch
 from uuid import uuid4
 
-from test_write_lifecycle import pinned, _current, _ids, _provision, _setup, _load, until
+from test_write_lifecycle import lifecycle, _current, _ids, _provision, _setup, _load, until
 
 
-async def test_platform_refusal_restarts_with_new_coordinator_and_retained_intent(pinned):
-    ctx = pinned
+async def test_platform_refusal_restarts_with_new_coordinator_and_retained_intent(lifecycle):
+    ctx = lifecycle
     operation_id = uuid4().hex
     store_id = await _provision(ctx, retained=operation_id)
     entry = await _setup(ctx, _ids(store_id, ctx.leaf))
@@ -24,8 +24,8 @@ async def test_platform_refusal_restarts_with_new_coordinator_and_retained_inten
     assert await hub.async_stop()
 
 
-async def test_drain_refusal_does_not_overlap_and_retries(pinned, monkeypatch):
-    ctx = pinned
+async def test_drain_refusal_does_not_overlap_and_retries(lifecycle, monkeypatch):
+    ctx = lifecycle
     store_id = await _provision(ctx)
     entry = await _setup(ctx, _ids(store_id, ctx.leaf))
     hub = entry.runtime_data
@@ -50,8 +50,8 @@ async def test_drain_refusal_does_not_overlap_and_retries(pinned, monkeypatch):
     assert await hub.async_stop()
 
 
-async def test_detach_refusal_keeps_parked_source_and_retries(pinned, monkeypatch):
-    ctx = pinned
+async def test_detach_refusal_keeps_parked_source_and_retries(lifecycle, monkeypatch):
+    ctx = lifecycle
     store_id = await _provision(ctx)
     entry = await _setup(ctx, _ids(store_id, ctx.leaf))
     hub = entry.runtime_data

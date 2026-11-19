@@ -17,7 +17,9 @@ from custom_components.petsafe_freshfeed.const import (
 
 @pytest.fixture
 def entry(hass):
-    entry = MockConfigEntry(domain=DOMAIN, entry_id="synthetic_entry", data={})
+    entry = MockConfigEntry(domain=DOMAIN, entry_id="synthetic_entry",
+                            data={CONF_CONNECTION_BACKEND: BACKEND_OWNED,
+                                  CONF_PROTOCOL_VERSION: "3.5"})
     entry.add_to_hass(hass)
     return entry
 
@@ -108,25 +110,13 @@ def test_restart_gets_fresh_offline_grace(hass, entry, clock):
     repairs.stop()
 
 
-@pytest.mark.parametrize("active", [True, False])
+@pytest.mark.parametrize("backend", [None, "legacy", "unknown"])
 @pytest.mark.parametrize("existing", [True, False])
-async def test_fenced_unsupported_entry_admission_first(hass, entry, monkeypatch, tmp_path, active, existing):
-    from uuid import uuid4
-    from custom_components.petsafe_freshfeed import async_setup_entry, hub, migration
-    from custom_components.petsafe_freshfeed.migration_journal import MigrationJournal
-    from custom_components.petsafe_freshfeed.migration_state import MigrationPhase, MigrationRecord
+async def test_non_owned_cutoff_precedes_protocol_issues(hass, entry, monkeypatch, backend, existing):
+    from homeassistant.exceptions import ConfigEntryError
+    from custom_components.petsafe_freshfeed import async_setup_entry, hub
 
-    hass.config.config_dir = str(tmp_path)
-    (tmp_path / ".storage").mkdir()
-    journal = MigrationJournal(str(tmp_path), entry.entry_id)
-    record = MigrationRecord(entry_id=entry.entry_id, source_entry_id="synthetic_source",
-        device_id="c" * 32, source_config_digest="d" * 64, source_disabled_by=None,
-        device_disabled_by=None, entity_disabled_by=(), retiring=(),
-        origin_marker=str(uuid4()), phase=MigrationPhase.PREPARED, revision=1)
-    await journal.async_create(record)
-    if active:
-        hass.data.setdefault(DOMAIN, {}).setdefault(migration.MIGRATIONS_KEY, set()).add(entry.entry_id)
-    hass.config_entries.async_update_entry(entry, data={CONF_CONNECTION_BACKEND: BACKEND_OWNED, CONF_PROTOCOL_VERSION: "3.3"})
+    hass.config_entries.async_update_entry(entry, data={CONF_CONNECTION_BACKEND: backend, CONF_PROTOCOL_VERSION: "3.3"})
     kinds = ("uncertain_intent", "offline", "unsupported_protocol")
     if existing:
         for kind in kinds:
@@ -136,26 +126,16 @@ async def test_fenced_unsupported_entry_admission_first(hass, entry, monkeypatch
     monkeypatch.setattr(module, "async_reconcile_protocol_issue", reconcile)
     construct = Mock(side_effect=RuntimeError("constructed"))
     monkeypatch.setattr(hub, "FreshFeedHub", construct)
-    with pytest.raises(ConfigEntryNotReady, match=hub.MIGRATION_PENDING):
+    with pytest.raises(ConfigEntryError) as caught:
         await async_setup_entry(hass, entry)
-    assert await journal.async_load() == record
+    assert caught.value.translation_key == "legacy_backend_removed"
     reconcile.assert_not_called()
     construct.assert_not_called()
     assert all(issue(hass, entry, kind) is original[kind] for kind in kinds)
-    hass.data.get(DOMAIN, {}).get(migration.MIGRATIONS_KEY, set()).discard(entry.entry_id)
-    await journal.async_remove()
-    def check_before_construction(*args):
-        assert issue(hass, entry, "unsupported_protocol") is not None
-        raise RuntimeError("constructed")
-    construct.side_effect = check_before_construction
-    with pytest.raises(RuntimeError, match="constructed"):
-        await async_setup_entry(hass, entry)
-    reconcile.assert_called_once()
 
 
 async def test_failed_retiring_drain_preserves_protocol_issue(hass, entry, monkeypatch):
     from custom_components.petsafe_freshfeed import async_setup_entry, hub
-    monkeypatch.setattr(hub, "async_migration_admits", AsyncMock(return_value=True))
     previous = SimpleNamespace(async_stop=AsyncMock(return_value=False))
     hass.data.setdefault(DOMAIN, {})["retiring"] = {entry.entry_id: previous}
     kinds = ("uncertain_intent", "offline", "unsupported_protocol")
@@ -175,7 +155,6 @@ async def test_failed_retiring_drain_preserves_protocol_issue(hass, entry, monke
 
 async def test_unsupported_protocol_issue_before_hub_setup(hass, entry, monkeypatch):
     from custom_components.petsafe_freshfeed import async_setup_entry, hub
-    monkeypatch.setattr(hub, "async_migration_admits", AsyncMock(return_value=True))
     source = Mock(side_effect=AssertionError("must not construct source"))
     monkeypatch.setattr(hub, "OwnedSource", source)
     hass.config_entries.async_update_entry(entry, data={CONF_CONNECTION_BACKEND: BACKEND_OWNED, CONF_PROTOCOL_VERSION: "3.3"})
@@ -205,7 +184,6 @@ async def test_unload_refusal_keeps_timer_successful_unload_stops_timer(hass, en
         return lambda: listeners.remove(listener)
     fake.async_add_listener = subscribe
     monkeypatch.setattr(hub, "FreshFeedHub", lambda *args: fake)
-    monkeypatch.setattr(hub, "async_migration_admits", AsyncMock(return_value=True))
     monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", AsyncMock())
     unload = AsyncMock(return_value=refusal != "platforms")
     monkeypatch.setattr(hass.config_entries, "async_unload_platforms", unload)
@@ -226,18 +204,16 @@ async def test_unload_refusal_keeps_timer_successful_unload_stops_timer(hass, en
     assert issue(hass, entry, "offline") is None
 
 
-@pytest.mark.parametrize("failure", ["admission", "start"])
-async def test_restart_failed_setup_clears_stale_offline_issue(hass, entry, clock, monkeypatch, failure):
+async def test_restart_failed_setup_clears_stale_offline_issue(hass, entry, clock, monkeypatch):
     from custom_components.petsafe_freshfeed import async_setup_entry, hub
     module._set(hass, entry, "offline", True)
     module._set(hass, entry, "uncertain_intent", True)
-    monkeypatch.setattr(hub, "async_migration_admits", AsyncMock(return_value=failure != "admission"))
     fake = SimpleNamespace(async_start=AsyncMock(side_effect=ConfigEntryNotReady("start failed")),
                            async_stop=AsyncMock(return_value=True))
     monkeypatch.setattr(hub, "FreshFeedHub", lambda *args: fake)
     with pytest.raises(ConfigEntryNotReady):
         await async_setup_entry(hass, entry)
-    assert (issue(hass, entry, "offline") is not None) == (failure == "admission")
+    assert issue(hass, entry, "offline") is None
     assert issue(hass, entry, "uncertain_intent") is not None
     assert not clock.timers
 
@@ -247,7 +223,6 @@ async def test_setup_failure_does_not_start_repairs_timer(hass, entry, clock, mo
     fake = SimpleNamespace(async_start=AsyncMock(), async_stop=AsyncMock(return_value=False),
                            async_add_listener=Mock())
     monkeypatch.setattr(hub, "FreshFeedHub", lambda *args: fake)
-    monkeypatch.setattr(hub, "async_migration_admits", AsyncMock(return_value=True))
     monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups",
                         AsyncMock(side_effect=RuntimeError("synthetic platform failure")))
     with pytest.raises(RuntimeError, match="synthetic platform failure"):

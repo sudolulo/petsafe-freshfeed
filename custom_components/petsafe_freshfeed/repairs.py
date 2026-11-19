@@ -7,7 +7,12 @@ from homeassistant.helpers.event import async_call_later
 
 from .const import BACKEND_OWNED, CONF_CONNECTION_BACKEND, CONF_PROTOCOL_VERSION, DOMAIN
 
-_KINDS = ("uncertain_intent", "offline", "unsupported_protocol")
+_KINDS = ("uncertain_intent", "offline", "unsupported_protocol", "cloud_auth")
+
+
+def async_cloud_auth_issue(hass, entry, active):
+    """Fixed notice; no account data enters the issue registry."""
+    _set(hass, entry, "cloud_auth", active)
 
 
 def _set(hass, entry, kind, active):

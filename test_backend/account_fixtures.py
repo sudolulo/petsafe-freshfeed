@@ -258,7 +258,7 @@ class SyntheticProfile(OpaqueProfile):
             "time": "1700000000",
             "requestId": request_id,
         }
-        if operation.name in ("HOMES", "DEVICES") and self._sid is not None:
+        if operation.name in ("HOMES", "DEVICES", "DP_GET") and self._sid is not None:
             env["sid"] = self._sid
         return env
 
@@ -329,6 +329,7 @@ ACTIONS = {
     "thing.m.user.email.password.login": "PASSWORD_LOGIN",
     "m.life.home.space.list": "HOMES",
     "m.life.my.group.device.list": "DEVICES",
+    "s.m.dev.dp.get": "DP_GET",
 }
 
 
@@ -356,13 +357,14 @@ class FakeServer:
     those (DEVICES callables receive the requested gid).
     """
 
-    def __init__(self, *, token=None, login=None, homes=None, devices=None):
+    def __init__(self, *, token=None, login=None, homes=None, devices=None, dp_get=None):
         self.responses = {
             "TOKEN": token if token is not None else token_fixture,
             "PASSWORD_LOGIN": login if login is not None else (
                 lambda: {"sid": SID, "ecode": ECODE, "uid": UID}),
             "HOMES": homes if homes is not None else default_homes,
             "DEVICES": devices if devices is not None else default_devices,
+            "DP_GET": dp_get if dp_get is not None else {"1": "AAAA", "140": "IAAA"},
         }
         self.ecode = None
         self.business = []
@@ -376,7 +378,8 @@ class FakeServer:
         self.business.append((op, business))
         slot = self.responses[op]
         if callable(slot) and not isinstance(slot, (dict, bytes)):
-            slot = slot(business["gid"]) if op == "DEVICES" else slot()
+            slot = (slot(business) if op == "DP_GET" else
+                    slot(business["gid"]) if op == "DEVICES" else slot())
         if isinstance(slot, BaseException):
             raise slot
         if isinstance(slot, Raw):

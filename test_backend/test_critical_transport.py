@@ -125,14 +125,14 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.api = FakeAPI()
         self.sock = self.api.socket
-        self.wrapper = SimpleNamespace(_api=self.api, _api_lock=asyncio.Lock())
+        self.wrapper = Owner(self.api, asyncio.Lock())
         self.witness = MemoryWitness()
         self.witness.fail = False
         self.engine = None
         self.thread_gates = []
 
     async def make(self, **kwargs):
-        self.engine = await CriticalTransport.async_create(
+        self.engine = await CriticalTransport.async_create_owned(
             self.wrapper, self.witness,
             compatibility_check=kwargs.pop("compatibility_check", lambda *args: True),
             **kwargs,
@@ -169,14 +169,14 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.api.payloads, [])
         self.assertEqual(self.witness.record["state"], "pending")
         self.assertFalse(self.engine.needs_reconciliation)
-        self.assertFalse(self.wrapper._api_lock.locked())
+        self.assertFalse(self.wrapper.lock.locked())
 
     async def test_compatibility_exact_true_required(self):
         for result in (False, None, 1, "yes"):
             with self.subTest(result=result), self.assertRaises(CompatibilityError):
                 await self.make(compatibility_check=lambda *args: result)
         with self.assertRaises(TypeError):
-            await CriticalTransport.async_create(self.wrapper, self.witness)
+            await CriticalTransport.async_create_owned(self.wrapper, self.witness)
         self.assertEqual(self.witness.preparations, [])
 
     async def test_compatibility_error_never_exposes_payload(self):
@@ -188,7 +188,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_aliases_and_callback_rechecked_under_exact_lock(self):
         calls = []
-        original_lock = self.wrapper._api_lock
+        original_lock = self.wrapper.lock
 
         def check(wrapper, api, lock):
             self.assertIs(wrapper, self.wrapper)
@@ -205,7 +205,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.sock.writes, [])
 
     async def test_changed_api_or_lock_rejected(self):
-        for alias in ("_api", "_api_lock"):
+        for alias in ("api", "lock"):
             with self.subTest(alias=alias):
                 await self.make()
                 original = getattr(self.wrapper, alias)
@@ -218,7 +218,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_callback_cannot_change_aliases(self):
         def check(*args):
-            self.wrapper._api = object()
+            self.wrapper.api = object()
             return True
         with self.assertRaises(CompatibilityError):
             await self.make(compatibility_check=check)
@@ -526,7 +526,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
                 receipt = await self.engine.async_send("settings", {"110": True})
                 self.assertEqual(receipt.reason, "transport_integrity")
                 self.assertTrue(self.engine.needs_reconciliation)
-                self.assertFalse(self.wrapper._api_lock.locked())
+                self.assertFalse(self.wrapper.lock.locked())
                 target.fail_restore = False
                 try:
                     await self.assert_integrity_barrier(receipt)
@@ -549,13 +549,13 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.sock = self.api.socket
         self.api.original = self.sock
         self.api.reject_restore = True
-        self.wrapper._api = self.api
+        self.wrapper.api = self.api
         await self.make()
         receipt = await self.engine.async_send("settings", {"110": True})
         self.assertEqual(receipt.reason, "transport_integrity")
         self.assertEqual(receipt.outcome, "unknown")
         self.assertTrue(self.engine.needs_reconciliation)
-        self.assertFalse(self.wrapper._api_lock.locked())
+        self.assertFalse(self.wrapper.lock.locked())
         self.api.reject_restore = False
         await self.assert_integrity_barrier(receipt)
 
@@ -585,14 +585,14 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
 
         self.api = ThreadFailureAPI()
         self.sock = self.api.socket
-        self.wrapper._api = self.api
+        self.wrapper.api = self.api
         await self.make()
         with self.assertNoLogs(log), self.assertNoLogs("asyncio"):
             receipt = await self.engine.async_send("settings", {"110": True})
         self.assertEqual(receipt.reason, "transport_integrity")
         self.assertEqual(receipt.outcome, "unknown")
         self.assertNotIn("synthetic-private", repr(receipt))
-        self.assertFalse(self.wrapper._api_lock.locked())
+        self.assertFalse(self.wrapper.lock.locked())
         self.assertEqual(self.api.payloads, [])
         self.assertEqual(self.api.calls, [])
         self.assertEqual(self.sock.writes, [])
@@ -695,13 +695,13 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_timeout_queued_for_lock_cannot_late_dispatch(self):
         await self.make()
-        await self.wrapper._api_lock.acquire()
+        await self.wrapper.lock.acquire()
         try:
             receipt = await self.engine.async_send("settings", {"110": True}, timeout=0.01)
             self.assertEqual(receipt.outcome, "not_sent")
             self.assertFalse(await self.engine.async_wait_idle(timeout=0.01))
         finally:
-            self.wrapper._api_lock.release()
+            self.wrapper.lock.release()
         self.assertTrue(await self.engine.async_wait_idle())
         self.assertEqual(self.sock.writes, [])
 
@@ -714,7 +714,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
                 if where == "witness":
                     self.witness.gate = asyncio.Event()
                 else:
-                    await self.wrapper._api_lock.acquire()
+                    await self.wrapper.lock.acquire()
                 started = asyncio.Event()
                 checkpoint = CriticalTransport._checkpoint
                 def observe(job):
@@ -730,7 +730,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
                     self.witness.gate.set()
                     self.witness.gate = None
                 else:
-                    self.wrapper._api_lock.release()
+                    self.wrapper.lock.release()
                 self.assertTrue(await self.engine.async_wait_idle())
                 self.assertEqual(self.sock.writes, [])
 
@@ -780,14 +780,14 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         await wait_thread_event(entered)
         receipt = await task
         self.assertEqual(receipt.outcome, "unknown")
-        self.assertTrue(self.wrapper._api_lock.locked())
+        self.assertTrue(self.wrapper.lock.locked())
         self.assertFalse(await self.engine.async_wait_idle(timeout=0.01))
         self.assertFalse(await self.engine.async_reconcile(
             receipt.operation_id, self.true_verifier, confirmed=True,
             session_id=self.engine.recovery_session_id))
         release.set()
         self.assertTrue(await self.engine.async_wait_idle())
-        self.assertFalse(self.wrapper._api_lock.locked())
+        self.assertFalse(self.wrapper.lock.locked())
         self.assertIs(self.api.socket, self.sock)
         self.assertEqual(self.sock.timeout, 12.0)
         self.assertEqual(self.witness.record["state"], "pending")
@@ -804,11 +804,11 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         for _ in range(3):
             worker.cancel()
             await asyncio.sleep(0)
-            self.assertTrue(self.wrapper._api_lock.locked())
+            self.assertTrue(self.wrapper.lock.locked())
             self.assertFalse(await self.engine.async_wait_idle(timeout=0.001))
         release.set()
         self.assertTrue(await self.engine.async_wait_idle())
-        self.assertFalse(self.wrapper._api_lock.locked())
+        self.assertFalse(self.wrapper.lock.locked())
         self.assertEqual(self.api.socketRetryLimit, 4)
         self.assertEqual(self.witness.record["state"], "pending")
         self.assertFalse(any(t.name.startswith("petsafe-critical") for t in threading.enumerate()))
@@ -828,7 +828,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(transport, "ThreadPoolExecutor", return_value=executor):
             receipt = await self.engine.async_send("settings", {"110": True}, timeout=0.01)
             self.assertEqual(receipt.outcome, "unknown")
-            self.assertTrue(self.wrapper._api_lock.locked())
+            self.assertTrue(self.wrapper.lock.locked())
             release.set()
             self.assertTrue(await self.engine.async_wait_idle())
         self.assertEqual(self.sock.writes, [])
@@ -859,7 +859,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.witness.fail = True  # Reconciliation must never prepare or clear.
 
         async def fresh_read():
-            async with self.wrapper._api_lock:
+            async with self.wrapper.lock:
                 return True
         self.assertTrue(await asyncio.wait_for(
             self.engine.async_reconcile(receipt.operation_id, fresh_read, confirmed=True,
@@ -911,7 +911,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         ))
         self.assertFalse(first.needs_reconciliation)
         durable = dict(self.witness.record)
-        second = await CriticalTransport.async_create(
+        second = await CriticalTransport.async_create_owned(
             self.wrapper, self.witness, compatibility_check=lambda *args: True,
         )
         self.engine = second
@@ -1155,7 +1155,7 @@ class DispatchHookTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.api = HookedAPI()
         self.sock = self.api.socket
-        self.wrapper = SimpleNamespace(_api=self.api, _api_lock=asyncio.Lock())
+        self.wrapper = Owner(self.api, asyncio.Lock())
         self.witness = MemoryWitness()
         self.engine = None
         self.events = []
@@ -1179,7 +1179,7 @@ class DispatchHookTests(unittest.IsolatedAsyncioTestCase):
     async def make(self, **kwargs):
         kwargs.setdefault("dispatch_callback", self.dispatch)
         kwargs.setdefault("report_callback", self.report)
-        self.engine = await CriticalTransport.async_create(
+        self.engine = await CriticalTransport.async_create_owned(
             self.wrapper, self.witness, compatibility_check=lambda *args: True, **kwargs)
         return self.engine
 
@@ -1328,7 +1328,7 @@ class DispatchHookTests(unittest.IsolatedAsyncioTestCase):
 class DurableWitnessTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.api = FakeAPI()
-        self.wrapper = SimpleNamespace(_api=self.api, _api_lock=asyncio.Lock())
+        self.wrapper = Owner(self.api, asyncio.Lock())
         self.models = []
         self.engines = []
         self.tasks = []
@@ -1352,7 +1352,7 @@ class DurableWitnessTests(unittest.IsolatedAsyncioTestCase):
         return model
 
     async def engine(self, model):
-        engine = await CriticalTransport.async_create(
+        engine = await CriticalTransport.async_create_owned(
             self.wrapper, model, compatibility_check=lambda *args: True)
         self.engines.append(engine)
         return engine
@@ -1419,7 +1419,7 @@ class DurableWitnessTests(unittest.IsolatedAsyncioTestCase):
     async def test_waiting_constructor_cancel_does_not_retire_owner(self):
         model = self.model(virgin=True)
         first = await self.engine(model)
-        await self.wrapper._api_lock.acquire()
+        await self.wrapper.lock.acquire()
         started = asyncio.Event()
 
         async def construct():
@@ -1433,7 +1433,7 @@ class DurableWitnessTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await task
         finally:
-            self.wrapper._api_lock.release()
+            self.wrapper.lock.release()
         receipt = await first.async_send("feed", {"110": True})
         self.assertEqual((receipt.outcome, receipt.attempted), ("unknown", True))
 
@@ -1459,7 +1459,7 @@ class DurableWitnessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task.cancelling(), 1)
         self.assertNotIn("synthetic-private", "".join(traceback.format_exception(caught.exception)))
         self.assertEqual(self.engines, [first])
-        self.assertFalse(self.wrapper._api_lock.locked())
+        self.assertFalse(self.wrapper.lock.locked())
         stale = await first.async_send("feed", {"110": True})
         self.assertEqual((stale.outcome, stale.attempted, stale.reason),
                          ("not_sent", False, "blocked"))
@@ -1506,7 +1506,7 @@ class DurableWitnessTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(engine._pending["state"], "unknown")
                 self.assertFalse(engine._busy)
                 self.assertTrue(await engine.async_wait_idle())
-                self.assertFalse(self.wrapper._api_lock.locked())
+                self.assertFalse(self.wrapper.lock.locked())
                 self.assertFalse(engine.storage_fault)
                 blocked = await engine.async_send("feed", {"110": True})
                 self.assertEqual((blocked.outcome, blocked.attempted, blocked.reason),
@@ -1534,7 +1534,7 @@ class DurableWitnessTests(unittest.IsolatedAsyncioTestCase):
 
         # The replacement queues first, but the predecessor still owns admission
         # until that constructor acquires the borrowed lock and publishes its token.
-        await self.wrapper._api_lock.acquire()
+        await self.wrapper.lock.acquire()
         try:
             construction = self.task(construct())
             await asyncio.wait_for(construction_started.wait(), 1)
@@ -1543,7 +1543,7 @@ class DurableWitnessTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(first.pending_operation_id)
             self.assertEqual(model.preparations, [])
         finally:
-            self.wrapper._api_lock.release()
+            self.wrapper.lock.release()
 
         replacement = await construction
         stale = await caller
@@ -1765,7 +1765,7 @@ class DurableWitnessTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(model, "async_prepare_intent", side_effect=observe_prepare):
                 newest_caller = self.task(replacement.async_send("settings", {"110": True}))
                 await asyncio.wait_for(dispatched.wait(), 1)
-                self.assertTrue(self.wrapper._api_lock.locked())
+                self.assertTrue(self.wrapper.lock.locked())
                 stale_caller = self.task(first.async_send("feed", {"110": True}))
                 prepared_waiter = self.task(stale_prepared.wait())
                 done, _ = await asyncio.wait(
@@ -2029,13 +2029,13 @@ class OwnedTransportTests(unittest.IsolatedAsyncioTestCase):
                 SimpleNamespace(api=self.api, lock=object(), is_current=lambda: True),
                 self.witness, compatibility_check=self.check)
 
-    async def test_legacy_create_signature_unchanged(self):
+    async def test_owned_create_signature(self):
         import inspect
-        params = inspect.signature(CriticalTransport.async_create).parameters
-        self.assertEqual(list(params), ["wrapper", "witness", "compatibility_check",
+        params = inspect.signature(CriticalTransport.async_create_owned).parameters
+        self.assertEqual(list(params), ["owner", "witness", "compatibility_check",
                                         "socket_deadline", "max_receive_bytes",
                                         "dispatch_callback", "report_callback"])
-        self.assertEqual(params["wrapper"].kind, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        self.assertEqual(params["owner"].kind, inspect.Parameter.POSITIONAL_OR_KEYWORD)
         for name in ("compatibility_check", "socket_deadline", "max_receive_bytes",
                      "dispatch_callback", "report_callback"):
             self.assertEqual(params[name].kind, inspect.Parameter.KEYWORD_ONLY)
@@ -2046,18 +2046,15 @@ class OwnedTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(list(owned), ["owner", "witness", "compatibility_check",
                                        "socket_deadline", "max_receive_bytes",
                                        "dispatch_callback", "report_callback"])
-        # Legacy check still receives the actual Tuya Local wrapper.
-        wrapper = SimpleNamespace(_api=self.api, _api_lock=asyncio.Lock())
+        # Owned check receives the actual public owner.
+        wrapper = Owner(self.api, asyncio.Lock())
         seen = []
-        self.engine = await CriticalTransport.async_create(
+        self.engine = await CriticalTransport.async_create_owned(
             wrapper, self.witness, compatibility_check=lambda *args: seen.append(args) or True)
-        self.assertEqual(seen, [(wrapper, self.api, wrapper._api_lock)])
+        self.assertEqual(seen, [(wrapper, self.api, wrapper.lock)])
 
-    async def test_report_types_reexported(self):
-        from custom_components.petsafe_freshfeed import local_source, tuya_bridge
-        self.assertIs(tuya_bridge.DeviceReport, local_source.DeviceReport)
-        self.assertIs(tuya_bridge.DispatchMark, local_source.DispatchMark)
-        self.assertIs(tuya_bridge._settle, local_source._settle)
+    async def test_neutral_report_types_are_immutable(self):
+        from custom_components.petsafe_freshfeed import local_source
         report = local_source.DeviceReport(1, 2, None, {"1": "x"})
         self.assertTrue(report.ack_eligible)
         with self.assertRaises(FrozenInstanceError):
@@ -2074,7 +2071,7 @@ class ShutdownTests(unittest.TestCase):
         async def main():
             api = FakeAPI()
             original = api.socket
-            wrapper = SimpleNamespace(_api=api, _api_lock=asyncio.Lock())
+            wrapper = Owner(api, asyncio.Lock())
             witness = MemoryWitness()
             witness.fail = False
 
@@ -2083,7 +2080,7 @@ class ShutdownTests(unittest.TestCase):
                 release.wait(2)
 
             original.on_send = hold
-            engine = await CriticalTransport.async_create(
+            engine = await CriticalTransport.async_create_owned(
                 wrapper, witness, compatibility_check=lambda *args: True)
             state.update(engine=engine, api=api, original=original, witness=witness, wrapper=wrapper)
             state["caller"] = asyncio.create_task(engine.async_send("settings", {"110": True}))
@@ -2101,14 +2098,14 @@ class ShutdownTests(unittest.TestCase):
         runner.start()
         try:
             self.assertTrue(finishing.wait(2))
-            self.assertTrue(state["wrapper"]._api_lock.locked())
+            self.assertTrue(state["wrapper"].lock.locked())
             self.assertTrue(runner.is_alive())
         finally:
             release.set()
             runner.join(3)
         self.assertFalse(runner.is_alive())
         self.assertNotIn("error", state)
-        self.assertFalse(state["wrapper"]._api_lock.locked())
+        self.assertFalse(state["wrapper"].lock.locked())
         self.assertIs(state["api"].socket, state["original"])
         self.assertEqual(state["original"].timeout, 12.0)
         self.assertEqual(state["api"].socketRetryLimit, 4)

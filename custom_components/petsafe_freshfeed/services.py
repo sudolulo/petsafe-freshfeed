@@ -13,7 +13,7 @@ from .const import (
     BRIGHTNESS_MAX, BRIGHTNESS_MIN, DOMAIN, FEED_CANCEL_COMMAND, SETTING_BOOL_DPS,
     SETTING_BRIGHTNESS_DP, WRITE_OPERATION_DPS,
 )
-from .quick_feed import decode_quick_feed
+from .quick_feed import QuickFeed, decode_quick_feed
 from .schedule_codec import MealEntry, ScheduleCodecError, decode_base64, encode_base64
 
 PUBLIC_REASONS = frozenset('invalid_request confirmation_required invalid_operation admin_required unknown_entry source_unavailable recovery_rejected stopped storage_fault integrity_fault busy recovery_in_progress intent_uncertain source_incompatible schedule_unknown stale_schedule quick_feed_active defrost_active feeding_active status_unavailable cancel_not_pending empty_tray already_refilled controls_disabled source_not_ready schedule_conflict'.split())
@@ -41,6 +41,7 @@ def service_error(reason: str) -> "ServiceValidationError":
 
 
 _SAFE_STATUS = frozenset(('standby', 'done', 'last_meal'))
+_RECOVERY_SAFE_STATUS = _SAFE_STATUS | {'no_food'}
 _DEFROST_STATUS = frozenset(('defrost', 'defrosting'))
 _COMMANDS = {'feed': 'EA==', 'cancel': FEED_CANCEL_COMMAND, 'defrost': 1, 'refilled': True}
 
@@ -72,6 +73,8 @@ def unsafe_reason(dps):
     """Known unsafe evidence only; missing evidence does not bar collection."""
     if decode_quick_feed(dps.get('140')).status in ('pending', 'feeding'):
         return 'quick_feed_active'
+    if '4' in dps and type(dps['4']) is not str:
+        return 'status_unavailable'
     if dps.get('4') in _DEFROST_STATUS or (type(dps.get('142')) is int and dps['142'] > 0):
         return 'defrost_active'
     if dps.get('4') == 'feeding':
@@ -86,6 +89,8 @@ def operation_reason(operation, dps):
         status = decode_quick_feed(dps.get('140')).status
         if status == 'feeding':
             return 'quick_feed_active'
+        if '4' in dps and type(dps['4']) is not str:
+            return 'status_unavailable'
         if dps.get('4') in _DEFROST_STATUS or (type(dps.get('142')) is int and dps['142'] > 0):
             return 'defrost_active'
         if dps.get('4') == 'feeding':
@@ -106,6 +111,43 @@ def operation_reason(operation, dps):
     if operation == 'refilled' and dps['145'] == 1:
         return 'already_refilled'
     return None
+
+
+def source_operation_decision(operation, dps, times, now, cloud_value=None, cloud_age=None, cloud_veto=False):
+    """Select a command using separately sourced, bounded safety evidence."""
+    from .const import FEED_NOW_COMMAND, FEED_START_COMMAND
+
+    if operation == 'schedule':
+        return None, None
+    if '140' in dps:
+        reason = operation_reason(operation, dps)
+        status = decode_quick_feed(dps['140']).status
+    else:
+        status = (cloud_value.status if type(cloud_value) is QuickFeed
+                  else decode_quick_feed(cloud_value).status) if cloud_age is not None else None
+        if cloud_veto or (cloud_age is not None and status not in ('idle', 'ready', 'failed')):
+            return 'quick_feed_active', None
+        usable = cloud_age is not None and 0 <= cloud_age < 60
+        if operation == 'cancel':
+            return 'cancel_not_pending', None
+        if any(key not in times or not 0 <= now - times[key] <= 35 for key in ('4', '142', '145')):
+            return 'status_unavailable', None
+        allowed = _SAFE_STATUS if usable else _RECOVERY_SAFE_STATUS
+        if (type(dps.get('4')) is not str or dps['4'] not in allowed or type(dps.get('142')) is not int
+                or dps['142'] != 0 or not _counter(dps.get('145'))):
+            return unsafe_reason(dps) or 'status_unavailable', None
+        if operation == 'feed' and (dps['4'] == 'no_food' or dps['145'] == 6):
+            return 'empty_tray', None
+        if operation == 'refilled' and dps['145'] == 1:
+            return 'already_refilled', None
+        reason = None
+        if not usable:
+            status = 'idle'
+    if reason:
+        return reason, None
+    if operation == 'feed':
+        return None, FEED_NOW_COMMAND if status == 'ready' else FEED_START_COMMAND
+    return None, None
 
 
 def acknowledgement(context, mark, report):
@@ -133,7 +175,8 @@ def acknowledgement(context, mark, report):
         if quick.command == 'cancel' and quick.status == 'idle':
             return 'observed'
     elif context.operation == 'defrost':
-        if (type(dps.get('142')) is int and dps['142'] > 0) or dps.get('4') in _DEFROST_STATUS:
+        if ((type(dps.get('142')) is int and dps['142'] > 0)
+                or (type(dps.get('4')) is str and dps['4'] in _DEFROST_STATUS)):
             return 'observed'
     elif context.operation == 'refilled':
         if type(dps.get('145')) is int and dps['145'] == 1:
@@ -148,19 +191,59 @@ def acknowledgement(context, mark, report):
     return 'ignore'
 
 
-def recovery_allowed(context, evidence):
+RECOVERY_SAFETY_KEYS = frozenset(('4', '140', '142', '145'))
+
+
+def recovery_report_invalid(dps):
+    """Explicit invalid/activity evidence vetoes an entire attempt; absence does not."""
+    return bool(
+        ('4' in dps and (type(dps['4']) is not str or dps['4'] not in _RECOVERY_SAFE_STATUS)) or
+        unsafe_reason(dps) or
+        ('140' in dps and decode_quick_feed(dps['140']).status is None) or
+        ('142' in dps and (type(dps['142']) is not int or dps['142'] != 0)) or
+        ('145' in dps and not _counter(dps['145'])))
+
+
+def _recovery_dps(context, evidence):
     if context != evidence.context or not evidence.reports:
-        return False
-    dps = {}
+        return None
+    baseline = getattr(evidence, 'baseline_dps', {})
+    if baseline and getattr(evidence, 'baseline_epoch', None) != context.epoch:
+        return None
+    dps = {key: value for key, value in baseline.items() if key in RECOVERY_SAFETY_KEYS}
     sequence = evidence.start_sequence
     for report in evidence.reports:
-        if report.epoch != context.epoch or report.sequence <= sequence:
-            return False
+        if (report.epoch != context.epoch or report.sequence <= sequence
+                or recovery_report_invalid(report.dps)):
+            return None
         sequence = report.sequence
         dps.update(report.dps)
-    if sequence != evidence.end_sequence or unsafe_reason(dps):
+    if sequence != evidence.end_sequence or recovery_report_invalid(dps):
+        return None
+    return dps
+
+
+def local_abandonment_allowed(context, evidence):
+    """Clear local uncertainty only; never assert idle or acknowledge execution."""
+    dps = _recovery_dps(context, evidence)
+    if dps is None or context.operation not in ('feed', 'cancel', 'defrost', 'refilled', 'schedule', 'settings'):
         return False
-    if dps.get('4') not in _SAFE_STATUS or not _counter(dps.get('145')):
+    fresh = {}
+    for report in evidence.reports:
+        fresh.update(report.dps)
+    if (fresh.get('4') not in _RECOVERY_SAFE_STATUS or not _counter(fresh.get('145'))
+            or type(fresh.get('142')) is not int or fresh['142'] != 0):
+        return False
+    # Only never-reported DP140 permits this exception. Otherwise the strict
+    # operation-specific route must supply its actual readback evidence.
+    return '140' not in dps
+
+
+def recovery_allowed(context, evidence):
+    dps = _recovery_dps(context, evidence)
+    if dps is None:
+        return False
+    if dps.get('4') not in _RECOVERY_SAFE_STATUS or not _counter(dps.get('145')):
         return False
     if ('140' in dps and decode_quick_feed(dps['140']).status is None
             or '142' in dps and (type(dps['142']) is not int or dps['142'] != 0)):
@@ -179,7 +262,8 @@ def recovery_allowed(context, evidence):
     if context.operation == 'defrost':
         return type(dps.get('142')) is int and dps['142'] == 0
     if context.operation == 'settings':
-        if operation_reason('settings', dps) is not None:
+        if (decode_quick_feed(dps.get('140')).status is None
+                or type(dps.get('142')) is not int or dps['142'] != 0):
             return False
         # A retained startup intent (no in-memory DP) needs only safe status;
         # a known request needs a post-request report of that setting DP.

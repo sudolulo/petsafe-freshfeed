@@ -1,12 +1,12 @@
 """Privacy-first diagnostics; never collect configuration or device payloads."""
 from homeassistant.const import __version__ as HA_VERSION
 
-from .const import BACKEND_LEGACY, BACKEND_OWNED, CONF_CONNECTION_BACKEND, CONF_PROTOCOL_VERSION
+from .const import BACKEND_OWNED, CONF_CONNECTION_BACKEND, CONF_PROTOCOL_VERSION
 
 # Kept in sync with manifest.json when releasing the integration.
-_COMPONENT_VERSION = "0.5.0"
+_COMPONENT_VERSION = "0.5.1"
 _REASONS = frozenset(("controls_disabled", "source_not_ready", "source_incompatible",
-                      "storage_fault", "integrity_fault", "migration_pending"))
+                      "storage_fault", "integrity_fault"))
 
 
 def _choice(value, choices, fallback="unknown"):
@@ -76,14 +76,16 @@ def _write_status(fields, result):
 async def async_get_config_entry_diagnostics(hass, entry):
     """Return fixed, bounded status only; no refreshes or storage access."""
     data = entry.data
-    backend = _choice(data.get(CONF_CONNECTION_BACKEND, BACKEND_LEGACY),
-                      {BACKEND_LEGACY, BACKEND_OWNED})
+    backend = _choice(data.get(CONF_CONNECTION_BACKEND),
+                      {BACKEND_OWNED})
     protocol = _choice(data.get(CONF_PROTOCOL_VERSION), {"3.5"}, None)
     result = {"component_version": _COMPONENT_VERSION, "ha_version": HA_VERSION,
               "backend": backend, "protocol_version": protocol, "connected": None,
               "admission_reason": "unknown", "schedule_source_state": "unknown",
               "schedule_count": None, "write_state": "unknown", "recovery_phase": "unknown",
-              "storage_fault": None, "integrity_fault": None}
+              "storage_fault": None, "integrity_fault": None,
+              "cloud_mode": "enabled" if getattr(entry, "options", {}).get("cloud_read_enabled") is True else "fully_local",
+              "cloud_auth": "unknown", "cloud_outcome": "unknown"}
     hub = getattr(entry, "runtime_data", None)
     if hub is None:
         return result
@@ -91,6 +93,10 @@ async def async_get_config_entry_diagnostics(hass, entry):
     # that can refresh connection state. A partial hub may also have properties
     # that raise. Only already-stored fields are safe to inspect here.
     fields = _fields(hub)
+    cloud = _fields(fields.get("cloud_read"))
+    result["cloud_auth"] = _choice(cloud.get("auth_state"), {"signed_in", "signed_out"})
+    result["cloud_outcome"] = _choice(cloud.get("last_outcome"),
+                                      {"ok", "unavailable", "malformed", "session_rejected"})
     snapshot = _fields(fields.get("snapshot"))
     schedule = _fields(fields.get("schedule"))
     result["connected"] = _bool(snapshot.get("available"))

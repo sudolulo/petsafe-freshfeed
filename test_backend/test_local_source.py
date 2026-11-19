@@ -27,16 +27,26 @@ class SplitFrameTests(unittest.TestCase):
     def test_monitor_frame_split_without_double_delivery(self):
         parts = split_frame({"1": "x", "110": True, "4": 2, "999": 1, "131": [1], "130": "s"},
                             exchange=False)
-        self.assertEqual(parts, [({"1": "x", "110": True, "4": 2}, True), ({"130": "s"}, False)])
+        self.assertEqual(parts, [({"131": None, "130": "s"}, False),
+                                 ({"1": "x", "110": True, "4": 2}, True)])
         keys = [key for dps, _ in parts for key in dps]
         self.assertEqual(len(keys), len(set(keys)))
+
+    def test_malformed_ack_values_are_invalid_and_never_ack_eligible(self):
+        for value in ([], {}, ["standby"], {"x": 1}, None, 1.5):
+            with self.subTest(value=value):
+                self.assertEqual(split_frame({"4": value, "145": 2}, exchange=False),
+                                 [({"4": None}, False), ({"145": 2}, True)])
+                self.assertEqual(split_frame({"4": value}, exchange=True),
+                                 [({"4": None}, False)])
 
     def test_exchange_frame_always_ineligible(self):
         self.assertEqual(split_frame({"1": "x", "130": "v"}, exchange=True),
                          [({"1": "x"}, False), ({"130": "v"}, False)])
 
     def test_empty_parts_omitted_and_types_filtered(self):
-        self.assertEqual(split_frame({"110": 1.5, "999": True}, exchange=False), [])
+        self.assertEqual(split_frame({"110": 1.5, "999": True}, exchange=False),
+                         [({"110": None}, False)])
         self.assertEqual(split_frame({"145": 3}, exchange=False), [({"145": 3}, True)])
         self.assertEqual(split_frame(None, exchange=False), [])
         self.assertEqual(split_frame({1: True}, exchange=False), [])

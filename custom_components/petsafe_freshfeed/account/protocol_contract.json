@@ -335,6 +335,12 @@
       "evidence": [
         "client.py:203-209 gid forwarded unchanged from the homes response"
       ]
+    },
+    "DP_GET": {
+      "action": "s.m.dev.dp.get",
+      "version": "1.0",
+      "session": "required",
+      "business": [["gwId", "device_id"], ["devId", "device_id"]]
     }
   },
   "value_types": {
@@ -342,7 +348,8 @@
     "email": "str, 3-254 chars, exactly one '@', printable, no whitespace (password_client.py:274 selects the email branch on '@')",
     "rsa_hex": "lowercase hex, even length, 128-2048 chars (password_client.py:190 .hex())",
     "login_token": "str, 1-1024 printable ASCII chars, no whitespace (password_client.py:283 str(token['token']))",
-    "group_id": "int 1..2**63-1 (not bool) or str matching [A-Za-z0-9_-]{1,64}; Task 2 must pass the exact HOMES-selected value"
+    "group_id": "int 1..2**63-1 (not bool) or str matching [A-Za-z0-9_-]{1,64}; Task 2 must pass the exact HOMES-selected value",
+    "device_id": "exact str matching [A-Za-z0-9_-]{1,64}"
   },
   "response_selectors": {
     "enforced_here": false,
@@ -425,7 +432,7 @@
   "country_route_evidence": "COUNTRY_ROUTE_EVIDENCE.md: getApiUrlByCountryCode -> getDefaultRegion(Context,String) -> getDefaultRegion(String) static fallbacks 1->AZ, 91->IN, 7->RU, unmatched->EU (44 is the evidenced unmatched GB/IM code); packaged mobileApiUrl records AZ/EU/IN/RU. Unknown, CN/AY, empty/timezone and override routes are unsupported.",
   "unsupported": [
     "Telephone/mobile login variants (password_client.py:42-47,357-386): not in this contract.",
-    "thing.m.device.get credentials (password_client.py:48,397-445), s.m.dev.dp.get status and thing.m.device.dp.publish (client.py:223-242): never emitted.",
+    "thing.m.device.get credentials (password_client.py:48,397-445) and thing.m.device.dp.publish (client.py:223-242): never emitted.",
     "Token endpoint retries/fallbacks (password_client.py:304-330) and server-directed endpoint replacement (password_client.py:388-395): not reused.",
     "AY/CN route: no packaged host; rejected.",
     "Independent PetSafe signer/envelope vectors: none exist; actual signing unverified.",

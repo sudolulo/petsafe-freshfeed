@@ -22,9 +22,9 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, async_
 
 from custom_components.petsafe_freshfeed import hub as hub_module
 from custom_components.petsafe_freshfeed.const import (
-    BACKEND_LEGACY, BACKEND_OWNED, CONF_CONNECTION_BACKEND, CONF_DEVICE_ID, CONF_HOST,
+    BACKEND_OWNED, CONF_CONNECTION_BACKEND, CONF_DEVICE_ID, CONF_HOST,
     CONF_INTENT_BINDING_ID, CONF_INTENT_STORE_ID, CONF_LOCAL_KEY, CONF_MIGRATED_FROM,
-    CONF_MIGRATION_STAGED_CONNECTION, CONF_PROTOCOL_VERSION, CONF_REGISTRY_DEVICE_ID,
+    CONF_PROTOCOL_VERSION, CONF_REGISTRY_DEVICE_ID,
     CONF_SOURCE_ENTRY_ID, DOMAIN,
 )
 from custom_components.petsafe_freshfeed.owned_source import OwnedSource
@@ -39,12 +39,12 @@ HUB_DPS = {**BASE_DPS, "1": SCHEDULE, "140": "EAAA", "145": 2, "14": 9}
 
 
 def test_constant_names():
-    assert (CONF_CONNECTION_BACKEND, BACKEND_LEGACY, BACKEND_OWNED) == (
-        "connection_backend", "legacy", "owned")
+    assert (CONF_CONNECTION_BACKEND, BACKEND_OWNED) == (
+        "connection_backend", "owned")
     assert (CONF_DEVICE_ID, CONF_LOCAL_KEY, CONF_HOST, CONF_PROTOCOL_VERSION) == (
         "device_id", "local_key", "host", "protocol_version")
-    assert (CONF_REGISTRY_DEVICE_ID, CONF_MIGRATED_FROM, CONF_MIGRATION_STAGED_CONNECTION) == (
-        "registry_device_id", "migrated_from", "migration_staged_connection")
+    assert (CONF_REGISTRY_DEVICE_ID, CONF_MIGRATED_FROM) == (
+        "registry_device_id", "migrated_from")
 
 
 async def until(predicate, timeout=5.0):
@@ -142,7 +142,7 @@ async def test_owned_hub_without_raw_entities(owned):
     assert entry.state is ConfigEntryState.LOADED
     assert not tuya_local_imported() and "tuya_local" not in ctx.hass.data
     assert ctx.hass.config_entries.async_entries("tuya_local") == []
-    assert hub.raw_entity_ids == {}
+    assert not hasattr(hub, 'raw_entity_ids')
     assert hub.schedule_entity_id is None and hub.quick_feed_entity_id is None
     # One PetSafe-owned leaf, created under this entry before platforms.
     devices = dr.async_entries_for_config_entry(dr.async_get(ctx.hass), entry.entry_id)
@@ -171,6 +171,64 @@ async def test_owned_hub_without_raw_entities(owned):
     assert hub.witness is None and hub.adapter is None
     assert set(ctx.device.commands) <= READ_ONLY_CMDS and ctx.device.control_frames() == []
     assert len(ctx.sources) == 1 and ctx.device.max_active <= 1
+
+
+async def test_read_only_connection_and_reconnect_demand_missing_dp140(owned, monkeypatch):
+    from custom_components.petsafe_freshfeed import cloud_read
+    from custom_components.petsafe_freshfeed.account import DPRead
+    from custom_components.petsafe_freshfeed.quick_feed import decode_quick_feed
+
+    ctx = owned
+    ctx.device.dps = {k: v for k, v in HUB_DPS.items() if k != "140"}
+    attempts = []
+    budget = {}
+
+    async def fetch():
+        attempts.append(True)
+        return DPRead("ok", None, decode_quick_feed("IAEA"), True)
+
+    monkeypatch.setattr(cloud_read, "create_entry_reader",
+                        lambda hass, entry: cloud_read.CloudRead(fetch, budget=budget))
+    entry = await setup(ctx, owned_data())
+    hub = entry.runtime_data
+    await until(lambda: len(attempts) == 1)
+    assert hub.adapter is None
+    assert hub.cloud_read.evidence("140", sequences=hub._dp_sequences) is not None
+    epoch = hub.bridge.epoch
+    ctx.device.refuse = True
+    ctx.device.sockets[-1].drop()
+    await until(lambda: not hub.snapshot.available)
+    budget.clear()  # Advance past the shared budget for the reconnect demand.
+    ctx.device.refuse = False
+    await until(lambda: hub.snapshot.available and hub.bridge.epoch > epoch and len(attempts) == 2)
+    assert hub.cloud_read.evidence("140", sequences=hub._dp_sequences) is not None
+    assert ctx.device.control_frames() == []
+
+
+async def test_schedule_refresh_does_not_start_cloud_during_recovery(owned, monkeypatch):
+    from custom_components.petsafe_freshfeed import cloud_read
+    from custom_components.petsafe_freshfeed.account import DPRead
+
+    ctx = owned
+    ctx.device.dps = {k: v for k, v in HUB_DPS.items() if k != '1'}
+    calls = []
+    async def fetch():
+        calls.append(True)
+        return DPRead('unavailable')
+    monkeypatch.setattr(cloud_read, 'create_entry_reader',
+                        lambda hass, entry: cloud_read.CloudRead(fetch))
+    entry = await setup(ctx, owned_data())
+    hub = entry.runtime_data
+    original = hub.adapter
+    hub.adapter = SimpleNamespace(_submitting=None, _ack_wait=None, _collector=object())
+    try:
+        await hub._demand_cloud_schedule(hub.bridge.epoch, hub.bridge, hub._binding_generation)
+        assert calls == []
+        hub.adapter._collector = None
+        await hub._demand_cloud_schedule(hub.bridge.epoch, hub.bridge, hub._binding_generation)
+        assert calls == [True]
+    finally:
+        hub.adapter = original
 
 
 async def test_owned_history_and_optional_reports(owned, hass_storage):
@@ -390,14 +448,7 @@ async def test_migrated_entities_no_second_device(owned, monkeypatch):
                              CONF_MIGRATED_FROM: source.entry_id})
     hass.config_entries.async_update_entry(entry, data=migrated)
 
-    # A migrated_from marker without an admitted journal fences before any source.
-    assert not await hass.config_entries.async_setup(entry.entry_id)
-    assert entry.state is ConfigEntryState.SETUP_RETRY and ctx.sources == []
-    await hass.config_entries.async_unload(entry.entry_id)
-
-    async def admits(hass_, entry_):
-        return True
-    monkeypatch.setattr(hub_module, "async_migration_admits", admits)
+    # Historical provenance is inert: no source/journal admission is required.
     assert await hass.config_entries.async_setup(entry.entry_id)
     hub = entry.runtime_data
     assert hub.device_id == leaf.id
@@ -411,15 +462,76 @@ async def test_migrated_entities_no_second_device(owned, monkeypatch):
     assert ctx.device.control_frames() == []
 
 
+@pytest.mark.parametrize("enabled_at_start", [True, False])
+async def test_owned_fences_former_source_for_different_device(owned, monkeypatch, enabled_at_start):
+    ctx = owned
+    source = MockConfigEntry(
+        domain="tuya_local", entry_id="former_source",
+        data={"device_id": "different_device"},
+        disabled_by=None if enabled_at_start else ConfigEntryDisabler.USER,
+    )
+    source.add_to_hass(ctx.hass)
+    entry = make_entry(ctx, {})
+    leaf = leaf_for(ctx, entry)
+    store_id = await provision(ctx, leaf.id)
+    ctx.hass.config_entries.async_update_entry(entry, data=owned_data(**{
+        CONF_SOURCE_ENTRY_ID: source.entry_id, CONF_REGISTRY_DEVICE_ID: leaf.id,
+        CONF_INTENT_BINDING_ID: leaf.id, CONF_INTENT_STORE_ID: store_id,
+    }))
+    assert await ctx.hass.config_entries.async_setup(entry.entry_id) is (not enabled_at_start)
+    await ctx.hass.async_block_till_done()
+    if enabled_at_start:
+        assert entry.state is ConfigEntryState.SETUP_RETRY
+        assert entry.reason == hub_module.SOURCE_CONFLICT
+        assert ctx.sources == []
+    else:
+        hub = entry.runtime_data
+        assert hub.snapshot.available and len(ctx.sources) == 1
+        assert not hub._source_conflict()
+        await until(lambda: hub.adapter is not None)
+        adapter = hub.adapter
+        monkeypatch.setattr(source, "disabled_by", None)
+        source._async_set_state(ctx.hass, ConfigEntryState.SETUP_IN_PROGRESS, None)
+        # Submit immediately, without running the one-second periodic check.
+        assert not hub._binding_valid
+        result = await adapter.async_submit("feed", {"140": "EA=="}, confirmed=True)
+        assert result["admitted"] is False
+        await ctx.hass.async_block_till_done()
+        assert not hub._binding_valid
+        assert hub.bridge is None
+    assert ctx.device.control_frames() == []
+
+
+async def test_owned_missing_former_source_does_not_block_setup(owned):
+    ctx = owned
+    entry = await setup(ctx, owned_data(**{CONF_SOURCE_ENTRY_ID: "absent_source"}))
+    assert ctx.hass.config_entries.async_get_entry("absent_source") is None
+    assert not entry.runtime_data._source_conflict()
+    assert entry.runtime_data.snapshot.available and len(ctx.sources) == 1
+    assert ctx.device.control_frames() == []
+
+
+@pytest.mark.parametrize("location", ["data", "options"])
+async def test_owned_fences_actual_device_conflict_without_provenance(owned, location):
+    ctx = owned
+    entry = await setup(ctx, owned_data())
+    hub = entry.runtime_data
+    source = MockConfigEntry(domain="tuya_local", **{location: {"device_id": DEVICE}})
+    source.add_to_hass(ctx.hass)
+    assert hub._source_conflict()
+    hub._check_owned()
+    await ctx.hass.async_block_till_done()
+    assert not hub._binding_valid
+    assert hub.bridge is None
+    assert ctx.device.control_frames() == []
+
+
 @pytest.mark.parametrize("case", ["wrong_leaf", "other_owner", "foreign_identifier",
                                   "binding_mismatch", "source_enabled", "bad_backend"])
 async def test_owned_leaf_and_conflict_admission(owned, monkeypatch, case):
     ctx = owned
     hass = ctx.hass
 
-    async def admits(hass_, entry_):
-        return True
-    monkeypatch.setattr(hub_module, "async_migration_admits", admits)
     registry = dr.async_get(hass)
     source = MockConfigEntry(domain="tuya_local", entry_id="legacy_source", data={"device_id": DEVICE},
                              disabled_by=None if case == "source_enabled" else ConfigEntryDisabler.USER)
@@ -449,27 +561,96 @@ async def test_owned_leaf_and_conflict_admission(owned, monkeypatch, case):
         assert entry.runtime_data.witness is None
     else:
         assert not await hass.config_entries.async_setup(entry.entry_id)
-        assert entry.state is ConfigEntryState.SETUP_RETRY
+        expected = ConfigEntryState.SETUP_ERROR if case == "bad_backend" else ConfigEntryState.SETUP_RETRY
+        assert entry.state is expected
         assert ctx.sources == [] and ctx.device.addresses == []
     assert len(registry.devices) == count  # never another leaf
     assert ctx.device.control_frames() == []
 
 
-async def test_legacy_backend_default_unchanged(hass, source_entry, raw_entities, loaded_source):
-    from custom_components.petsafe_freshfeed.tuya_bridge import TuyaBridge
+async def test_legacy_backend_never_constructs_hub(hass, source_entry, raw_entities, monkeypatch):
+    from unittest.mock import Mock
+    construct = Mock(side_effect=AssertionError("legacy hub constructed"))
+    monkeypatch.setattr(hub_module, "FreshFeedHub", construct)
     for data in ({CONF_SOURCE_ENTRY_ID: source_entry.entry_id},
                  {CONF_SOURCE_ENTRY_ID: source_entry.entry_id,
-                  CONF_CONNECTION_BACKEND: BACKEND_LEGACY}):
+                  CONF_CONNECTION_BACKEND: "legacy"}):
         entry = MockConfigEntry(domain=DOMAIN, data=data)
         entry.add_to_hass(hass)
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        hub = entry.runtime_data
-        assert hub.raw_entity_ids == raw_entities
-        assert isinstance(hub.bridge, TuyaBridge)
-        raw_device = er.async_get(hass).async_get(raw_entities[145]).device_id
-        assert hub.device_id == raw_device
+        assert not await hass.config_entries.async_setup(entry.entry_id)
+        assert entry.state is ConfigEntryState.SETUP_ERROR
         assert dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id) == []
-        assert {e.unique_id for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)} >= {
-            f"{entry.entry_id}_{key}" for key in SENSORS}
-        assert hub.snapshot.status == "no_food"
-        assert await hass.config_entries.async_unload(entry.entry_id)
+        construct.assert_not_called()
+
+
+async def test_hub_reports_dp140_seen_this_epoch_for_adapter_seeding(owned):
+    from test_hub import owned_hub, report
+    hub = owned_hub(owned)
+    await hub.async_start()
+    try:
+        epoch = hub.bridge.epoch
+        assert '140' not in hub.reported_dps(epoch)
+        await report(owned, hub, {'140': 'EAEA'})
+        value, sequence = hub.reported_dps(epoch)['140']
+        assert value == 'EAEA' and sequence == hub._dp_sequences['140']
+        assert hub.reported_dps(epoch + 1) == {}
+    finally:
+        await hub.async_stop()
+
+
+async def test_refused_second_shutdown_drain_resumes_cloud_reader(owned, monkeypatch):
+    """A refused async_stop must leave cloud reads working after resume."""
+    from test_hub import owned_hub
+    from custom_components.petsafe_freshfeed.cloud_read import CloudRead
+    hub = owned_hub(owned)
+    calls, completed = [], []
+
+    async def fetch():
+        calls.append(True)
+        return SimpleNamespace(outcome='ok', dp1=None, dp140='EAAA', dp140_present=True)
+
+    now = [0.0]
+    hub.cloud_read = CloudRead(fetch, clock=lambda: now[0])
+    hub.cloud_read.subscribe(completed.append)
+    await hub.async_start()
+    real_drain = hub._async_drain
+    drains = []
+
+    async def drain():
+        drains.append(True)
+        # The first (controls) drain succeeds; the second shutdown drain is refused.
+        return await real_drain() if len(drains) == 1 else False
+
+    monkeypatch.setattr(hub, '_async_drain', drain)
+    try:
+        assert await hub.async_stop() is False
+        hub.resume_after_failed_unload()
+        monkeypatch.setattr(hub, '_async_drain', real_drain)
+        now[0] = 120.0
+        await hub.cloud_read.demand(epoch=7, sequences={})
+        assert calls == [True] and completed == [7]
+        assert hub.cloud_read.evidence('140').value == 'EAAA'
+    finally:
+        await hub.async_stop()
+    now[0] = 240.0
+    await hub.cloud_read.demand(epoch=8, sequences={})
+    assert calls == [True]  # a successful stop closes the reader for good
+
+
+@pytest.mark.parametrize('active', ['EAEA', 'EAIA', 'invalid'])
+async def test_hub_reports_latest_same_epoch_dp140_for_adapter_seeding(owned, active):
+    """Only the latest local DP140 and sequence are seeded."""
+    from test_hub import owned_hub, report
+    hub = owned_hub(owned)
+    await hub.async_start()
+    try:
+        epoch = hub.bridge.epoch
+        await report(owned, hub, {'140': 'EAAA'})
+        await report(owned, hub, {'140': active})
+        await report(owned, hub, {'140': 'EAAA'})
+        seed = hub.reported_dps(epoch)
+        assert set(seed) == {'140'} and seed['140'][0] == 'EAAA'
+        hub._connection_changed(epoch, False)
+        assert hub.reported_dps(epoch) == {}
+    finally:
+        await hub.async_stop()

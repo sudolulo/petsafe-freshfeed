@@ -182,15 +182,14 @@ async def test_setting_unknown_reason_is_not_exposed(owned):
         hub.adapter = None
 
 
-async def test_legacy_backend_has_no_setting_entities(hass, source_entry, raw_entities, loaded_source):
+async def test_legacy_backend_has_no_setting_entities(hass, source_entry, raw_entities):
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_SOURCE_ENTRY_ID: source_entry.entry_id})
     entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
+    assert not await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert all(entity_id(hass, entry, role) is None for role in ROLES)
     assert not [e for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
                 if e.domain in ("switch", "number")]
-    assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 # --------------------------------------------------------------------------

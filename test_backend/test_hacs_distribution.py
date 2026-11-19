@@ -19,19 +19,15 @@ except ImportError:
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'tools/build-hacs.py'
 COMPONENT = 'custom_components/petsafe_freshfeed/'
-RUNTIME = '''__init__.py binary_sensor.py config_flow.py const.py critical_transport.py entity.py event.py hub.py lifecycle.py observed.py quick_feed.py schedule_codec.py schedule_state.py sensor.py services.py source_binding.py sqlite_witness.py store_bootstrap.py tuya_bridge.py tuya_compat.py write_adapter.py manifest.json strings.json services.yaml tuya_fingerprints.json translations/en.json'''.split()
+RUNTIME = '''__init__.py cloud_read.py binary_sensor.py config_flow.py const.py critical_transport.py entity.py event.py hub.py lifecycle.py observed.py quick_feed.py schedule_codec.py schedule_state.py sensor.py services.py sqlite_witness.py store_bootstrap.py write_adapter.py manifest.json strings.json services.yaml translations/en.json'''.split()
 ACCOUNT = '''account/__init__.py account/boundary.py account/client.py account/profile.py account/exchange.py account/protocol_contract.json lan_locate.py source_lookup.py'''.split()
-# Standalone onboarding no longer drives Tuya Local: its setup assist and the
-# component profile copy it installed were removed from the source tree and
-# are not shipped (the manual-install profile export stays for legacy users).
+# Retired setup assist and profile are never shipped.
 NOT_SHIPPED = '''tuya_local_assist.py profile/petsafe_freshfeed_raw.yaml'''.split()
 # Neutral source contract and the PetSafe-owned TinyTuya source (standalone).
 OWNED_SOURCE = '''local_source.py owned_source.py owned_compat.py owned_fingerprints.json'''.split()
-# Durable migration journal and pure recovery reducer.
-MIGRATION = '''migration_state.py migration_journal.py migration.py'''.split()
 # Owned-backend setting entity platforms (stainless inserts, meal counter, brightness).
 SETTINGS = '''switch.py number.py owned_setting.py'''.split()
-RUNTIME = RUNTIME + ACCOUNT + OWNED_SOURCE + MIGRATION + SETTINGS + ['diagnostics.py', 'repairs.py', 'device_trigger.py']
+RUNTIME = RUNTIME + ACCOUNT + OWNED_SOURCE + SETTINGS + ['diagnostics.py', 'repairs.py', 'device_trigger.py']
 APP_PROFILE = COMPONENT + 'account/app_profile.json'
 APP_PROFILE_DEST = 'petsafe-freshfeed/' + APP_PROFILE
 PROFILE_FILE = 'public-apk-profile.private.json'
@@ -60,7 +56,7 @@ PROFILE_DEST = 'petsafe-freshfeed/examples/tuya_local/petsafe_freshfeed_raw.yaml
 BLUEPRINTS = {f'blueprints/automation/petsafe_freshfeed/{name}.yaml' for name in (
     'low_estimated_meals', 'feeder_attention', 'refill_cleaning_reminder')}
 EXPECTED = {
-    'petsafe-freshfeed': COMMON | {COMPONENT + n for n in RUNTIME} | {COMPONENT + 'brand/icon.png'} | {'examples/tuya_local/petsafe_freshfeed_raw.yaml'} | BLUEPRINTS,
+    'petsafe-freshfeed': COMMON | {COMPONENT + n for n in RUNTIME} | {COMPONENT + 'brand/icon.png'} | BLUEPRINTS,
     'pet-feeder-card': COMMON | {'dist/pet-feeder-card.js', 'dist/freshfeed-model.js', 'dist/pet-feeder-card-editor.js', 'dist/freshfeed-editor-model.js'},
 }
 spec = importlib.util.spec_from_file_location('build_hacs', SCRIPT)
@@ -153,32 +149,23 @@ class DistributionTest(unittest.TestCase):
                          'Permission is hereby granted'):
             self.assertIn(required, root_notice, f'root NOTICE missing: {required}')
 
-    def test_raw_profile_exported_sanitized_and_byte_identical(self):
+    def test_retired_runtime_and_raw_profile_not_exported(self):
         out = self.good_build()
-        exported = out / PROFILE_DEST
-        self.assertTrue(exported.is_file(), 'exported profile missing from distribution')
-        self.assertEqual(exported.read_bytes(), (ROOT / PROFILE_SRC).read_bytes())
-        data = yaml.safe_load(exported.read_text())
-        self.assertEqual(data['name'], 'PetSafe FreshFeed raw observation')
-        text = exported.read_text()
-        for secret in ('device_id:', 'ip:', 'key:', 'protocol:'):
-            self.assertNotIn(secret, text)
+        self.assertFalse((out / PROFILE_DEST).exists())
+        retired = {'tuya_bridge.py', 'tuya_compat.py', 'source_binding.py',
+                   'tuya_fingerprints.json', 'migration.py', 'migration_state.py',
+                   'migration_journal.py', 'petsafe_freshfeed_raw.yaml'}
+        self.assertFalse(retired & {p.name for p in out.rglob('*')})
 
-    def test_integration_readme_documents_pinned_compatibility_and_profile(self):
+    def test_integration_readme_documents_pinned_compatibility(self):
         readme = (self.good_build() / 'petsafe-freshfeed/README.md').read_text()
         for required in (
-            'https://github.com/make-all/tuya-local/archive/027351717d3f6b8bef30c47a018944b430f5661e.tar.gz',
             '2026.10.0',
             '1.20.0',
-            'examples/tuya_local/petsafe_freshfeed_raw.yaml',
-            '/config/custom_components/tuya_local/devices/petsafe_freshfeed_raw.yaml',
-            'restart',
-            'petsafe_freshfeed_raw',
-            'overwrite',
         ):
             self.assertIn(required, readme, f'readme missing: {required}')
 
-    def test_release_050_040_metadata(self):
+    def test_release_051_041_metadata(self):
         """Release versions retain the pinned compatibility contract."""
         out = self.good_build()
         integration = out / 'petsafe-freshfeed'
@@ -187,16 +174,16 @@ class DistributionTest(unittest.TestCase):
         self.assertEqual(hacs['name'], 'PetSafe FreshFeed')
         self.assertFalse(hacs.get('content_in_root', False))
         manifest = json.loads((integration / COMPONENT / 'manifest.json').read_text())
-        self.assertEqual(manifest['version'], '0.5.0')
-        self.assertEqual(manifest['after_dependencies'], ['tuya_local'])
+        self.assertEqual(manifest['version'], '0.5.1')
+        self.assertNotIn('after_dependencies', manifest)
         self.assertNotIn('dependencies', manifest)
         self.assertEqual(manifest['requirements'], ['tinytuya==1.20.0'])
         package = json.loads((ROOT / 'package.json').read_text())
-        self.assertEqual(package['version'], '0.4.0')
+        self.assertEqual(package['version'], '0.4.1')
         lock = json.loads((ROOT / 'package-lock.json').read_text())
-        self.assertEqual(lock['version'], '0.4.0')
-        self.assertEqual(lock['packages']['']['version'], '0.4.0')
-        self.assertIn('**0.4.0**', (ROOT / 'distribution/README-card.md').read_text())
+        self.assertEqual(lock['version'], '0.4.1')
+        self.assertEqual(lock['packages']['']['version'], '0.4.1')
+        self.assertIn('0.4.1', (ROOT / 'distribution/README-card.md').read_text())
         changelog = (ROOT / 'CHANGELOG.md').read_text()
         self.assertIn('## Integration [0.5.0] - 2026-11-18', changelog)
         self.assertIn('## Card [0.4.0] - 2026-11-18', changelog)
@@ -205,20 +192,16 @@ class DistributionTest(unittest.TestCase):
                         changelog.index('## Integration [0.3.0]'))
 
     def test_early_compatibility_and_safety_contract(self):
-        for path in ('README.md', 'distribution/README-card.md', 'distribution/README-integration.md'):
+        for path in ('README.md', 'distribution/README-integration.md'):
             text = (ROOT / path).read_text()
-            early = text[:2500]
-            for value in ('0.5.0', '0.4.0', '2026.10.0', '2026.10.x', '1.20.0', '3.5'):
-                self.assertIn(value, early, f'{path}: {value}')
-            for value in ('administrator', 'blueprint', 'offline', 'advisory'):
+            for value in ('0.5.1', '2026.10.0', '1.20.0', '3.5'):
+                self.assertIn(value, text, f'{path}: {value}')
+            for value in ('administrator', 'offline', 'advisory'):
                 self.assertIn(value, text.lower(), f'{path}: {value}')
 
     def test_release_documentation_examples_and_install_closure(self):
         readme = (ROOT / 'README.md').read_text()
-        deploy = readme.split('## Deploy', 1)[1].split('### FreshFeed', 1)[0]
-        for module in ('pet-feeder-card.js', 'freshfeed-model.js',
-                       'pet-feeder-card-editor.js', 'freshfeed-editor-model.js'):
-            self.assertIn(f'scp card/{module}', deploy)
+        self.assertNotIn('scp ', readme)
         spec_text = (ROOT / 'docs/card-spec.md').read_text()
         self.assertNotIn('No visual editor.', spec_text)
         self.assertNotIn('One deployable ES module:', spec_text)
@@ -242,7 +225,7 @@ class DistributionTest(unittest.TestCase):
 
     def test_blueprint_documentation_has_full_source_and_import_urls(self):
         from urllib.parse import quote
-        for path in ('README.md', 'distribution/README-card.md', 'distribution/README-integration.md'):
+        for path in ('README.md', 'distribution/README-integration.md'):
             text = (ROOT / path).read_text()
             for blueprint in BLUEPRINTS:
                 raw = 'https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/main/' + blueprint
@@ -251,33 +234,15 @@ class DistributionTest(unittest.TestCase):
             for phrase in ('does not automatically install', 'unsaved increments', 'administrator', 'without backfill'):
                 self.assertIn(phrase, text, path)
 
-    def test_readmes_document_standalone_and_migration(self):
+    def test_readmes_document_standalone(self):
         built = (self.good_build() / 'petsafe-freshfeed/README.md').read_text()
         root = (ROOT / 'README.md').read_text()
         for name, text in (('distribution', built), ('root', root)):
-            readme = ' '.join(text.split())  # wrapped prose: compare whitespace-normalized
-            for required in (
-                '0.4.0',
-                'tinytuya==1.20.0',
-                'Tuya Local is not required',
-                'owned_source_incompatible',
-                '2026.10.0',
-                '2026.10.x',
-                'Legacy entries',
-                'raw entities',
-                'restart',
-                'backup',
-                'local key',
-                'Connect directly (migrate away from Tuya Local)',
-                'Continue the migration',
-                'Cancel the migration',
-                'forward-only',
-                'Remove the retired Tuya Local entry',
-                'not uninstalled',
-                'protocol 3.5',
-            ):
+            readme = ' '.join(text.split())
+            for required in ('tinytuya==1.20.0', '2026.10.0', 'protocol 3.5', 'local key'):
                 self.assertIn(required, readme, f'{name} readme missing: {required}')
-            self.assertNotIn('Tuya Local 2026.10.0 remains a required separately installed dependency', readme)
+            for retired in ('Continue the migration', 'Cancel the migration', 'profile copy'):
+                self.assertNotIn(retired, readme)
 
     def test_existing_output_and_stale_extras_are_never_overwritten(self):
         out = self.base / 'stale'
@@ -313,10 +278,10 @@ class DistributionTest(unittest.TestCase):
         for forbidden in ('private.txt', 'deploy/cards.json', 'docs/whisker-reference.png', '.git/config', 'custom_components/petsafe_freshfeed/unknown.py'):
             self.assertNotIn(forbidden, approved)
 
-    def test_raw_profile_source_and_test_inputs(self):
-        self.assertTrue((ROOT / PROFILE_SRC).is_file())
+    def test_exact_source_inputs_without_raw_profile(self):
+        self.assertFalse((ROOT / PROFILE_SRC).exists())
         self.assertEqual(set(exporter.INTEGRATION.values()),
-                         {'LICENSE', 'distribution/NOTICE-public', 'assets/brand/logo.svg', 'assets/brand/readme.png', PROFILE_SRC, 'assets/brand/icon.png', 'distribution/README-integration.md', 'distribution/hacs-integration.json', 'distribution/workflow-integration.yml'}
+                         {'LICENSE', 'distribution/NOTICE-public', 'assets/brand/logo.svg', 'assets/brand/readme.png', 'assets/brand/icon.png', 'distribution/README-integration.md', 'distribution/hacs-integration.json', 'distribution/workflow-integration.yml'}
                          | {COMPONENT + n for n in RUNTIME} | BLUEPRINTS)
 
     def test_manifests_png_and_import_closure(self):
@@ -325,11 +290,11 @@ class DistributionTest(unittest.TestCase):
         card = out / 'pet-feeder-card'
         manifest = json.loads((integration / COMPONENT / 'manifest.json').read_text())
         self.assertEqual(manifest['domain'], 'petsafe_freshfeed')
-        self.assertEqual(manifest['version'], '0.5.0')
+        self.assertEqual(manifest['version'], '0.5.1')
+        self.assertNotIn('after_dependencies', manifest)
         self.assertNotIn('tuya_local', manifest.get('dependencies', []))
         self.assertEqual(manifest['codeowners'], ['@sudolulo'])
         self.assertEqual(manifest['issue_tracker'], 'https://github.com/sudolulo/petsafe-freshfeed/issues')
-        self.assertEqual(manifest['after_dependencies'], ['tuya_local'])
         hc = json.loads((card / 'hacs.json').read_text())
         self.assertEqual(hc['filename'], 'pet-feeder-card.js')
         self.assertFalse(hc.get('zip_release', False))
@@ -381,7 +346,7 @@ class DistributionTest(unittest.TestCase):
         files = contents(self.good_build())
         for name in ACCOUNT:
             self.assertEqual(files['petsafe-freshfeed/' + COMPONENT + name], (ROOT / COMPONENT / name).read_bytes(), name)
-        self.assertIn(PROFILE_DEST, files)  # manual-install export kept
+        self.assertNotIn(PROFILE_DEST, files)
 
     def test_tuya_local_assist_not_shipped(self):
         for name in NOT_SHIPPED:
@@ -393,8 +358,8 @@ class DistributionTest(unittest.TestCase):
         for name in NOT_SHIPPED:
             self.assertFalse((ROOT / COMPONENT / name).exists(), name)
         self.assertFalse((ROOT / 'test_ha/test_tuya_local_assist.py').exists())
-        self.assertTrue((ROOT / PROFILE_SRC).is_file())
-        self.assertEqual(files[PROFILE_DEST], (ROOT / PROFILE_SRC).read_bytes())
+        self.assertFalse((ROOT / PROFILE_SRC).exists())
+        self.assertNotIn(PROFILE_DEST, files)
 
     def test_build_bundles_profile_from_dir(self):
         out = self.base / 'with-profile'

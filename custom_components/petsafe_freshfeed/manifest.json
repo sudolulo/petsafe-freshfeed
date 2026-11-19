@@ -1,7 +1,6 @@
 {
   "domain": "petsafe_freshfeed",
   "name": "PetSafe FreshFeed",
-  "after_dependencies": ["tuya_local"],
   "codeowners": ["@sudolulo"],
   "config_flow": true,
   "documentation": "https://github.com/sudolulo/petsafe-freshfeed",
@@ -9,5 +8,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/sudolulo/petsafe-freshfeed/issues",
   "requirements": ["tinytuya==1.20.0"],
-  "version": "0.5.0"
+  "version": "0.5.1"
 }

@@ -21,6 +21,11 @@ SOURCE_ENTRY_ID = "synthetic_tuya_source_entry"
 SOURCE_TITLE = "PetSafe FreshFeed"
 DEVICE_ID = "fakeid"
 
+# Owned protocol fixtures are shared by safety tests, never legacy providers.
+from test_owned_source import pinned, no_tuya_local  # noqa: F401,E402
+from test_owned_hub import owned, owned as owned_context  # noqa: F401,E402
+from test_write_lifecycle import lifecycle  # noqa: F401,E402
+
 # DP -> (platform, live state) as observed on the real device (spec Evidence table).
 RAW_DPS = {
     4: ("sensor", "standby"),
@@ -101,20 +106,6 @@ def raw_entities(hass: HomeAssistant, source_entry) -> dict[int, str]:
         result[dp] = entry.entity_id
         hass.states.async_set(entry.entity_id, state)
     return result
-
-
-@pytest.fixture
-def loaded_source(hass, source_entry, raw_entities, monkeypatch):
-    """Synthetic shared client; provenance is tested separately with temp files."""
-    import asyncio
-    from types import SimpleNamespace
-    from test_tuya_bridge import Api
-    from custom_components.petsafe_freshfeed import tuya_bridge
-    api = Api()
-    wrapper = SimpleNamespace(_api=api, _api_lock=asyncio.Lock())
-    hass.data.setdefault("tuya_local", {})[DEVICE_ID] = {"device": wrapper}
-    monkeypatch.setattr(tuya_bridge, "check_loaded_source", lambda *args: True)
-    return wrapper
 
 
 def set_raw(hass: HomeAssistant, entity_id: str, state: str) -> None:

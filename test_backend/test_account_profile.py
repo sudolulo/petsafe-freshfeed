@@ -663,12 +663,35 @@ class SessionState(GuardedCase):
                     reply = self.wrap(reply)
             elif op == "HOMES":
                 reply = {"result": [{"gid": 100001}]}
+            elif op == "DP_GET":
+                self.case.assertEqual(business, {"gwId": "synthdev0001", "devId": "synthdev0001"})
+                self.case.assertEqual(fields["sid"], "FAKE-sid-sentC1")
+                reply = {"1": "AAAA", "140": "IAAA"}
             else:
                 reply = {"result": [{"devId": "synthdev0001", "productId": "knjcty4hcaby0qaa"}]}
             sealed = seal_response(key, json.dumps(reply).encode())
             if op == "PASSWORD_LOGIN" and isinstance(self.login_ecode, str) and self.login_ecode:
                 self.server_ecode = self.login_ecode
             return outer(sealed)
+
+    def test_public_handoff_and_real_profile_restart(self):
+        from custom_components.petsafe_freshfeed import account
+        app = self.app_profile()
+        server = self.Server(self, "FAKE-ecode-sentC2")
+        request = ac.SignIn("synthetic.user@example.invalid", "synthetic-pass", "1")
+        result = account.discover(request, profile=app, _exchange=server)
+        self.assertIs(result.outcome, ac.Outcome.OK)
+        self.assertEqual(request._password, "")
+        self.assertIsNotNone(result.session)
+        restored = account.restore_session(result.session.storage_data(), result.session.storage_route())
+        read = account.read_dps(restored, "synthdev0001", profile=app, _exchange=server)
+        self.assertEqual(read.outcome, "ok")
+        self.assertEqual(read.dp140.status, "idle")
+        self.assertEqual([op for op, _, _ in server.ops],
+                         ["TOKEN", "PASSWORD_LOGIN", "HOMES", "DEVICES", "DP_GET"])
+        for value in (result, result.session, restored, read):
+            for secret in ("FAKE-sid-sentC1", "FAKE-ecode-sentC2", "synthetic-pass"):
+                self.assertNotIn(secret, repr(value) + str(value))
 
     def _run(self, ecode, wrap=None):
         profile = self.profile()

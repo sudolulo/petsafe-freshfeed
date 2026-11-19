@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from homeassistant.exceptions import ServiceValidationError
 
-from custom_components.petsafe_freshfeed.tuya_bridge import DeviceReport, DispatchMark
+from custom_components.petsafe_freshfeed.local_source import DeviceReport, DispatchMark
 from custom_components.petsafe_freshfeed.write_adapter import IntentContext, RecoveryEvidence
 
 
@@ -66,6 +66,83 @@ def test_recovery_combines_only_fresh_safe_evidence(operation, extra):
         assert not recovery_allowed(ctx, RecoveryEvidence(ctx, 1, 4, rows + (report(invalid, 4),)))
 
 
+@pytest.mark.parametrize('status', ['standby', 'done', 'last_meal', 'no_food',
+    'feeding', 'defrost', 'defrosting', 'enum_4', 'idle', 'ready', 'empty', 'run_out', 'unknown', None])
+def test_recovery_status_matrix(status):
+    from custom_components.petsafe_freshfeed.services import recovery_allowed
+    ctx = IntentContext('cancel', 'op', 'session', 1, {})
+    dps = {'4': status, '145': 6, '140': 'IAAA', '142': 0}
+    assert recovery_allowed(ctx, RecoveryEvidence(ctx, 1, 2, (report(dps),))) == (status in ('standby', 'done', 'last_meal', 'no_food'))
+
+
+@pytest.mark.parametrize('invalid', [{'4': 'feeding'}, {'4': None}, {'4': []}, {'4': {}}, {'140': 'EAEA'},
+    {'140': 'EAIA'}, {'140': 'bad'}, {'142': True}, {'142': -1}, {'142': 1},
+    {'145': True}, {'145': 0}, {'145': 7}])
+def test_unsafe_then_safe_reports_latch_recovery_veto(invalid):
+    from custom_components.petsafe_freshfeed.services import recovery_allowed
+    ctx = IntentContext('cancel', 'op', 'session', 1, {})
+    safe = {'4': 'standby', '145': 6, '140': 'IAAA', '142': 0}
+    assert not recovery_allowed(ctx, RecoveryEvidence(ctx, 1, 3, (report(invalid), report(safe, 3))))
+
+
+@pytest.mark.parametrize('operation', ['feed', 'cancel', 'defrost', 'refilled', 'schedule', 'settings'])
+def test_local_abandonment_requires_fresh_triple(operation):
+    from custom_components.petsafe_freshfeed import services
+    predicate = getattr(services, 'local_abandonment_allowed', lambda *args: False)
+    ctx = IntentContext(operation, 'op', 'session', 1, {'110': True} if operation == 'settings' else {})
+    fresh = {'4': 'no_food', '142': 0, '145': 6}
+    assert predicate(ctx, RecoveryEvidence(ctx, 1, 2, (report(fresh),)))
+    for missing in fresh:
+        assert not predicate(ctx, RecoveryEvidence(ctx, 1, 2, (report({k: v for k, v in fresh.items() if k != missing}),)))
+    if operation == 'cancel':
+        for quick in ('EAEA', 'EAIA', 'EAMA', 'EAQA', 'bad'):
+            assert not predicate(ctx, RecoveryEvidence(ctx, 1, 2, (report(fresh | {'140': quick}),)))
+
+
+@pytest.mark.parametrize('operation', ['schedule', 'settings'])
+@pytest.mark.parametrize('quick', ['IAAA', 'EAMA', 'EAQA'])
+@pytest.mark.parametrize('in_baseline', [False, True])
+def test_reported_dp140_cannot_abandon_missing_operation_readback(operation, quick, in_baseline):
+    """The missing-140 route cannot bypass schedule/setting readback requirements."""
+    from custom_components.petsafe_freshfeed.services import local_abandonment_allowed, recovery_allowed
+    ctx = IntentContext(operation, 'op', 'session', 1, {'110': True} if operation == 'settings' else {})
+    fresh = {'4': 'standby', '142': 0, '145': 2}
+    baseline = {'140': quick} if in_baseline else {}
+    if not in_baseline:
+        fresh['140'] = quick
+    evidence = RecoveryEvidence(ctx, 1, 2, (report(fresh),),
+        baseline_epoch=1, baseline_dps=baseline)
+    assert not recovery_allowed(ctx, evidence)
+    assert not local_abandonment_allowed(ctx, evidence)
+
+
+def test_recovery_observed_baseline_only_safety_keys():
+    from custom_components.petsafe_freshfeed.services import recovery_allowed
+    ctx = IntentContext('cancel', 'op', 'session', 1, {})
+    baseline = {'4': 'standby', '145': 6, '140': 'IAAA', '142': 0}
+    evidence = SimpleNamespace(context=ctx, start_sequence=1, end_sequence=2,
+        reports=(report({'110': True}),), baseline_epoch=1, baseline_dps=baseline)
+    assert recovery_allowed(ctx, evidence)
+    evidence.baseline_epoch = 2
+    assert not recovery_allowed(ctx, evidence)
+    evidence.baseline_epoch = 1
+    for operation, request in [('schedule', {}), ('settings', {'111': 4})]:
+        evidence.context = IntentContext(operation, 'op', 'session', 1, request)
+        evidence.baseline_dps = baseline | {'1': '/w==', '111': 4}
+        assert not recovery_allowed(evidence.context, evidence)
+
+
+def test_no_food_safe_for_recovery_only():
+    from custom_components.petsafe_freshfeed.services import operation_reason, recovery_allowed
+    ctx = IntentContext('cancel', 'op', 'session', 1, {})
+    dps = {'4': 'no_food', '145': 6, '140': 'IAAA', '142': 0}
+    assert recovery_allowed(ctx, RecoveryEvidence(ctx, 1, 2, (report(dps),)))
+    for operation in ('feed', 'cancel', 'settings'):
+        assert operation_reason(operation, dps) == 'status_unavailable'
+    settings = IntentContext('settings', 'op', 'session', 1, {})
+    assert recovery_allowed(settings, RecoveryEvidence(settings, 1, 2, (report(dps),)))
+
+
 @pytest.mark.parametrize('operation,dps,reason', [
     ('cancel', {'4': 'standby','145': 1,'140': 'EAEA','142': 0}, None),
     ('cancel', {'4': 'standby','145': 6,'140': 'EAEA','142': 0}, None),
@@ -87,6 +164,110 @@ def test_recovery_combines_only_fresh_safe_evidence(operation, extra):
 def test_interlock(operation, dps, reason):
     from custom_components.petsafe_freshfeed.services import operation_reason
     assert operation_reason(operation, dps) == reason
+
+
+@pytest.mark.parametrize('operation,quick', [
+    ('feed', 'EAAA'), ('feed', 'EAMA'), ('feed', 'EAQA'),
+    ('feed', 'EAEA'), ('feed', 'bad'), ('cancel', 'EAEA'),
+    ('cancel', 'EAAA'), ('defrost', 'EAIA'), ('refilled', 'EAAA'),
+])
+def test_source_decision_local_dp140_uses_operation_reason(operation, quick):
+    from custom_components.petsafe_freshfeed.const import FEED_NOW_COMMAND, FEED_START_COMMAND
+    from custom_components.petsafe_freshfeed.services import operation_reason, source_operation_decision
+    dps = {'4': 'standby', '142': 0, '145': 2, '140': quick}
+    reason, command = source_operation_decision(operation, dps, {}, 100, None, None)
+    assert reason == operation_reason(operation, dps)
+    expected = FEED_NOW_COMMAND if quick == 'EAMA' else FEED_START_COMMAND
+    assert command == (expected if operation == 'feed' and reason is None else None)
+
+
+@pytest.mark.parametrize('quick,command_name', [
+    ('EAAA', 'FEED_START_COMMAND'), ('EAMA', 'FEED_NOW_COMMAND'),
+    ('EAQA', 'FEED_START_COMMAND'),
+])
+@pytest.mark.parametrize('operation', ['feed', 'defrost', 'refilled', 'settings'])
+def test_source_decision_inactive_cloud_with_fresh_local_triple(operation, quick, command_name):
+    from custom_components.petsafe_freshfeed import const, services
+    dps = {'4': 'standby', '142': 0, '145': 2}
+    times = dict.fromkeys(dps, 100)
+    reason, command = services.source_operation_decision(operation, dps, times, 100, quick, 0)
+    assert reason is None
+    assert command == (getattr(const, command_name) if operation == 'feed' else None)
+
+
+@pytest.mark.parametrize('quick', ['EAEA', 'EAIA', 'invalid'])
+@pytest.mark.parametrize('age', [0, 60, 1000])
+@pytest.mark.parametrize('operation', ['feed', 'defrost', 'refilled', 'settings', 'cancel'])
+def test_source_decision_active_or_malformed_cloud_vetoes_even_expired(operation, quick, age):
+    from custom_components.petsafe_freshfeed.services import source_operation_decision
+    dps = {'4': 'standby', '142': 0, '145': 2}
+    assert source_operation_decision(operation, dps, dict.fromkeys(dps, 100), 100, quick, age)[0] is not None
+
+
+@pytest.mark.parametrize('cloud,age', [(None, None), ('EAAA', 60), ('EAMA', 61), ('EAQA', 1000)])
+@pytest.mark.parametrize('operation', ['feed', 'defrost', 'refilled', 'settings'])
+def test_source_decision_absent_or_expired_inactive_uses_fresh_local_exception(operation, cloud, age):
+    from custom_components.petsafe_freshfeed.const import FEED_START_COMMAND
+    from custom_components.petsafe_freshfeed.services import source_operation_decision
+    dps = {'4': 'standby', '142': 0, '145': 2}
+    assert source_operation_decision(operation, dps, dict.fromkeys(dps, 100), 100, cloud, age) == (
+        None, FEED_START_COMMAND if operation == 'feed' else None)
+    dps['4'] = 'no_food'
+    reason, command = source_operation_decision(operation, dps, dict.fromkeys(dps, 100), 100, cloud, age)
+    assert (reason is None) == (operation != 'feed')
+    assert command is None
+
+
+@pytest.mark.parametrize('key', ['4', '142', '145'])
+@pytest.mark.parametrize('age,allowed', [(35, True), (35.001, False), (-0.001, False)])
+def test_source_decision_local_freshness_boundary(key, age, allowed):
+    from custom_components.petsafe_freshfeed.services import source_operation_decision
+    dps = {'4': 'standby', '142': 0, '145': 2}
+    times = dict.fromkeys(dps, 100)
+    times[key] = 100 - age
+    assert (source_operation_decision('feed', dps, times, 100, 'EAAA', 0)[0] is None) == allowed
+    del times[key]
+    assert source_operation_decision('feed', dps, times, 100, 'EAAA', 0)[0] is not None
+
+
+@pytest.mark.parametrize('status', [[], {}, ['standby']])
+@pytest.mark.parametrize('cloud,age', [(None, None), ('EAAA', 0)])
+@pytest.mark.parametrize('operation', ['feed', 'defrost', 'refilled', 'settings'])
+def test_source_decision_unhashable_status_fails_closed(status, cloud, age, operation):
+    from custom_components.petsafe_freshfeed.services import source_operation_decision
+    dps = {'4': status, '142': 0, '145': 2}
+    assert source_operation_decision(operation, dps, dict.fromkeys(dps, 100), 100,
+                                     cloud, age) == ('status_unavailable', None)
+
+
+def test_source_decision_accepts_decoded_cloud_quick_feed():
+    from custom_components.petsafe_freshfeed.quick_feed import decode_quick_feed
+    from custom_components.petsafe_freshfeed.const import FEED_NOW_COMMAND
+    from custom_components.petsafe_freshfeed.services import source_operation_decision
+    dps = {'4': 'standby', '142': 0, '145': 2}
+    assert source_operation_decision('feed', dps, dict.fromkeys(dps, 100), 100,
+                                     decode_quick_feed('EAMA'), 0) == (None, FEED_NOW_COMMAND)
+
+
+def test_source_decision_cloud_freshness_boundary_and_veto():
+    from custom_components.petsafe_freshfeed.const import FEED_NOW_COMMAND, FEED_START_COMMAND
+    from custom_components.petsafe_freshfeed.services import source_operation_decision
+    dps = {'4': 'standby', '142': 0, '145': 2}
+    times = dict.fromkeys(dps, 100)
+    assert source_operation_decision('feed', dps, times, 100, 'EAMA', 59.999) == (None, FEED_NOW_COMMAND)
+    assert source_operation_decision('feed', dps, times, 100, 'EAMA', 60) == (None, FEED_START_COMMAND)
+    assert source_operation_decision('feed', dps, times, 100, None, None, cloud_veto=True)[0] is not None
+
+
+def test_source_decision_cancel_requires_local_pending_schedule_ignores_dp140():
+    from custom_components.petsafe_freshfeed.services import source_operation_decision
+    dps = {'4': 'standby', '142': 0, '145': 2}
+    times = dict.fromkeys(dps, 100)
+    for cloud, age in [(None, None), ('EAEA', 0), ('EAAA', 0)]:
+        assert source_operation_decision('cancel', dps, times, 100, cloud, age)[0] is not None
+        assert source_operation_decision('schedule', dps, {}, 100, cloud, age, cloud_veto=True) == (None, None)
+    assert source_operation_decision('cancel', dps | {'140': 'EAEA'}, times, 100, None, None) == (None, None)
+    assert source_operation_decision('schedule', {'140': 'invalid'}, {}, 100, 'invalid', 999, cloud_veto=True) == (None, None)
 
 
 @pytest.mark.parametrize('changes', [
@@ -247,3 +428,19 @@ async def test_near_meal_schedule_admitted_under_normal_rules(hass, freezer):
     assert operation == 'schedule'
     assert set(dps) == {'1'}
     assert adapter.async_submit.await_args.kwargs == {'base_revision': 'digest'}
+
+
+@pytest.mark.parametrize('status', [[], {}, ['standby'], {'status': 'standby'}, None, True, 4])
+@pytest.mark.parametrize('operation', ['cancel', 'feed', 'defrost', 'refilled', 'settings'])
+def test_malformed_dp4_refuses_every_operation_without_raising(operation, status):
+    """An unhashable or non-string DP4 is unavailable evidence on every branch."""
+    from custom_components.petsafe_freshfeed.services import operation_reason
+    dps = {'4': status, '145': 2, '140': 'EAEA' if operation == 'cancel' else 'EAAA', '142': 0}
+    assert operation_reason(operation, dps) == 'status_unavailable'
+
+
+@pytest.mark.parametrize('status', [[], {}, ['defrost'], {'status': 'defrost'}, True, 4])
+def test_malformed_dp4_never_acknowledges_defrost_and_does_not_raise(status):
+    from custom_components.petsafe_freshfeed.services import acknowledgement
+    ctx = IntentContext('defrost', 'op', 'session', 1, {'142': 1})
+    assert acknowledgement(ctx, DispatchMark('op', 1, 1), report({'4': status, '142': 0})) == 'ignore'

@@ -7,7 +7,13 @@ import pytest
 
 from custom_components.petsafe_freshfeed.observed import FeedEvent
 from custom_components.petsafe_freshfeed.sensor import FreshFeedSensor
-from test_hub import make_hub
+from test_owned_hub import make_entry, owned_data
+from custom_components.petsafe_freshfeed.hub import FreshFeedHub
+
+
+def make_hub(hass, owned):
+    owned.device.dps.pop('1', None)
+    return FreshFeedHub(hass, make_entry(owned, owned_data()))
 
 
 @pytest.fixture
@@ -24,8 +30,8 @@ def mock_recorder_before_hass(request, monkeypatch):
 
 
 @pytest.mark.parametrize('payload', [[], {'version': 2, 'events': [], 'schedule': None}])
-async def test_v2_and_list_upgrade_zero_no_backfill(hass, source_entry, raw_entities, hass_storage, payload):
-    hub = make_hub(hass, source_entry)
+async def test_v2_and_list_upgrade_zero_no_backfill(hass, owned, hass_storage, payload):
+    hub = make_hub(hass, owned)
     key = f'petsafe_freshfeed.{hub.entry.entry_id}'
     from custom_components.petsafe_freshfeed.schedule_state import ScheduleState
     now = datetime.now(timezone.utc)
@@ -65,8 +71,8 @@ async def test_v2_and_list_upgrade_zero_no_backfill(hass, source_entry, raw_enti
     {'counting_since': '2026-01-01T00:00:00+00:00'},
 ])
 @pytest.mark.parametrize('save_path', ['event', 'dispensed', 'schedule', 'disconnect', 'stop'])
-async def test_corrupt_v3_survives_each_unrelated_save_and_reload(hass, source_entry, raw_entities, hass_storage, counter, save_path):
-    hub = make_hub(hass, source_entry)
+async def test_corrupt_v3_survives_each_unrelated_save_and_reload(hass, owned, hass_storage, counter, save_path):
+    hub = make_hub(hass, owned)
     key = f'petsafe_freshfeed.{hub.entry.entry_id}'
     original = deepcopy(counter)
     hass_storage[key] = {'version': 1, 'minor_version': 1, 'key': key, 'data': {'version': 3, 'events': [], **counter}}
@@ -76,7 +82,7 @@ async def test_corrupt_v3_survives_each_unrelated_save_and_reload(hass, source_e
     assert hub.counting_since is None
     sensor = FreshFeedSensor(hub, hub.entry.entry_id, 'observed_meals_dispensed_total')
     assert not sensor.available and sensor.native_value is None
-    from custom_components.petsafe_freshfeed.tuya_bridge import DeviceReport
+    from custom_components.petsafe_freshfeed.local_source import DeviceReport
     from pytest_homeassistant_custom_component.common import async_fire_time_changed
     now = datetime.now(timezone.utc)
     if save_path in {'event', 'dispensed', 'stop'}:
@@ -116,10 +122,10 @@ async def test_corrupt_v3_survives_each_unrelated_save_and_reload(hass, source_e
     {'events': [], 'counting_since': 'unknown'},
     'unrecognized payload',
 ])
-async def test_unsupported_store_is_preserved_on_save_and_reload(hass, source_entry, raw_entities, hass_storage, payload):
+async def test_unsupported_store_is_preserved_on_save_and_reload(hass, owned, hass_storage, payload):
     from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
-    hub = make_hub(hass, source_entry)
+    hub = make_hub(hass, owned)
     key = f'petsafe_freshfeed.{hub.entry.entry_id}'
     original = deepcopy(payload)
     hass_storage[key] = {'version': 1, 'minor_version': 1, 'key': key, 'data': deepcopy(payload)}
@@ -144,16 +150,17 @@ async def test_unsupported_store_is_preserved_on_save_and_reload(hass, source_en
     assert hass_storage[key]['data'] == original
 
 
-async def test_total_increasing_statistics_compile(recorder_mock, hass, source_entry, raw_entities, freezer):
+async def test_total_increasing_statistics_compile(recorder_mock, hass, owned, freezer):
     """Real recorder: refill is flat; backup rollback starts a new meter cycle."""
     from homeassistant.components.recorder import get_instance
     from pytest_homeassistant_custom_component.components.recorder.common import (
         async_wait_recording_done, do_adhoc_statistics, statistics_during_period,
     )
-    from test_entities import setup, state
+    from test_entities import state
+    from test_owned_hub import setup
     start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
     freezer.move_to(start)
-    entry = await setup(hass, source_entry)
+    entry = await setup(owned, owned_data(), title='PetSafe FreshFeed')
     hub = entry.runtime_data
     entity_id = state(hass, 'sensor', 'observed_meals_dispensed_total').entity_id
     try:
@@ -195,23 +202,15 @@ async def test_total_increasing_statistics_compile(recorder_mock, hass, source_e
         await hass.config_entries.async_unload(entry.entry_id)
 
 
-@pytest.mark.parametrize('backend', ['owned', 'legacy'])
-async def test_only_new_dispensed_events_increment_owned_and_legacy(hass, source_entry, raw_entities, backend):
-    from custom_components.petsafe_freshfeed.tuya_bridge import DeviceReport
-    hub = make_hub(hass, source_entry)
+async def test_only_new_dispensed_events_increment_owned(hass, owned):
+    from custom_components.petsafe_freshfeed.local_source import DeviceReport
+    hub = make_hub(hass, owned)
     await hub.async_start()
     try:
         # Use each production observation boundary; all transport remains synthetic.
-        hub._owned = backend == 'owned'
         at = datetime.now(timezone.utc)
         async def report(seq, dps, epoch=1):
-            if backend == 'owned':
-                hub._device_report(DeviceReport(epoch, seq, at, dps))
-            else:
-                for dp, value in dps.items():
-                    if int(dp) in raw_entities:
-                        hass.states.async_set(raw_entities[int(dp)], str(value))
-                hub._device_report(DeviceReport(epoch, seq, at, dps))
+            hub._device_report(DeviceReport(epoch, seq, at, dps))
             await hass.async_block_till_done()
         await report(1, {'145': 'unavailable'})
         await report(2, {'145': 2, '14': 0, '150': 0})
@@ -228,12 +227,11 @@ async def test_only_new_dispensed_events_increment_owned_and_legacy(hass, source
         await report(13, {'145': 3}, epoch=2)
         assert hub.observed_meals_dispensed_total == 2
     finally:
-        hub._owned = False
         await hub.async_stop()
 
 
-async def test_total_survives_pruning_refill_reload_and_orderly_stop(hass, source_entry, raw_entities):
-    hub = make_hub(hass, source_entry)
+async def test_total_survives_pruning_refill_reload_and_orderly_stop(hass, owned):
+    hub = make_hub(hass, owned)
     await hub.async_start()
     now = datetime.now(timezone.utc)
     for i in range(502):

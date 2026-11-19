@@ -30,6 +30,12 @@ class OwnedQuickFeedState(FreshFeedEntity, SensorEntity):
 
 
 class FreshFeedSensor(FreshFeedEntity, RestoreSensor):
+    async def async_update(self):
+        """Honor an explicit schedule refresh without enabling periodic polling."""
+        if self.key == 'schedule' and self.hub.bridge is not None:
+            await self.hub._demand_cloud_schedule(
+                self.hub.bridge.epoch, self.hub.bridge, self.hub._binding_generation)
+
     def __init__(self, hub, entry_id, key):
         basis = "ha_observed" if key in {"last_fed", "last_feed_result", "meals_today"} else "inferred" if key in {"next_meal", "brightness"} else "observed"
         super().__init__(hub, entry_id, key, basis)
@@ -100,6 +106,7 @@ class FreshFeedSensor(FreshFeedEntity, RestoreSensor):
         if self.key == 'next_meal':
             schedule = self.hub.schedule
             return {'basis': 'schedule', 'source_state': schedule.source_state,
+                    'provenance': schedule.provenance,
                     'observed_at': schedule.observed_at.isoformat() if schedule.observed_at else None,
                     'reason': 'empty_tray' if self.hub.snapshot.meals_left == 0 else None}
         if self.key == 'quick_feed':
@@ -112,6 +119,7 @@ class FreshFeedSensor(FreshFeedEntity, RestoreSensor):
             return {
                 "entries": [asdict(row) for row in schedule.entries] if schedule.entries is not None else None,
                 "source_state": schedule.source_state,
+                "provenance": schedule.provenance,
                 "observed_at": schedule.observed_at.isoformat() if schedule.observed_at else None,
                 "revision": schedule.revision,
                 "source_entity_id": self.hub.schedule_entity_id,

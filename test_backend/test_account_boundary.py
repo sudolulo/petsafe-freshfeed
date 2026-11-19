@@ -363,7 +363,7 @@ class OfflineGuardTests(GuardedTestCase):
 class ContractTests(GuardedTestCase):
     def test_boundary_module_and_closed_operations(self):
         from custom_components.petsafe_freshfeed.account.boundary import Operation
-        self.assertEqual({m.name for m in Operation}, {"TOKEN", "PASSWORD_LOGIN", "HOMES", "DEVICES"})
+        self.assertEqual({m.name for m in Operation}, {"TOKEN", "PASSWORD_LOGIN", "HOMES", "DEVICES", "DP_GET"})
 
     def test_contract_rows_are_the_pinned_rows(self):
         boundary, contract = load()
@@ -383,16 +383,31 @@ class ContractTests(GuardedTestCase):
 
     @unittest.skipUnless(HAVE_HARNESS, NO_HARNESS)
     def test_contract_matches_pinned_source_anchors(self):
-        """The shipped contract is the harness contract, byte for byte, and its
-        source hashes and line anchors still match the pinned public source.
+        """Only the explicitly approved DP_GET extension differs from the harness.
+        Source hashes and line anchors still match the pinned public source.
         At runtime the package ships no vendor source, so this check is a
         development-time test, not a load-time gate."""
         from custom_components.petsafe_freshfeed.account import boundary
         with open(CONTRACT_PATH, "rb") as fh:
             shipped = fh.read()
         with open(os.path.join(HARNESS, "protocol_contract.json"), "rb") as fh:
-            self.assertEqual(shipped, fh.read())
+            expected = json.load(fh)
+        expected["operations"]["DP_GET"] = {
+            "action": "s.m.dev.dp.get", "version": "1.0", "session": "required",
+            "business": [["gwId", "device_id"], ["devId", "device_id"]],
+        }
+        expected["value_types"]["device_id"] = "exact str matching [A-Za-z0-9_-]{1,64}"
+        old_exclusion = (
+            "thing.m.device.get credentials (password_client.py:48,397-445), "
+            "s.m.dev.dp.get status and thing.m.device.dp.publish (client.py:223-242): never emitted."
+        )
+        self.assertIn(old_exclusion, expected["unsupported"])
+        expected["unsupported"][expected["unsupported"].index(old_exclusion)] = (
+            "thing.m.device.get credentials (password_client.py:48,397-445) "
+            "and thing.m.device.dp.publish (client.py:223-242): never emitted."
+        )
         document = json.loads(shipped)
+        self.assertEqual(document, expected)
         self.assertTrue(verify_pinned_source(document, VENDOR))
         self.assertFalse(hasattr(boundary, "_verify_pinned_source"))
         tmp = tempfile.mkdtemp(prefix="petsafe-test-src-")

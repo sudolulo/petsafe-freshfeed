@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .const import CONF_MIGRATION_STAGED_CONNECTION, DOMAIN, PLATFORMS, TRANSITIONS_KEY
+from .const import BACKEND_OWNED, CONF_CONNECTION_BACKEND, DOMAIN, PLATFORMS, TRANSITIONS_KEY
 
 # hass.data[DOMAIN] key: hubs whose failed-setup shutdown has not drained yet.
 _RETIRING = "retiring"
@@ -19,23 +19,34 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Minor owned schema evolution only; never convert a retired backend."""
+    if entry.version != 1:
+        return False
+    if entry.data.get(CONF_CONNECTION_BACKEND) != BACKEND_OWNED:
+        return True
+    if entry.minor_version < 2:
+        options = dict(entry.options)
+        session = entry.data.get("cloud_session")
+        has_sid = isinstance(session, dict) and type(session.get("sid")) is str and bool(session["sid"])
+        options.setdefault("cloud_read_enabled", has_sid)
+        hass.config_entries.async_update_entry(entry, options=options, minor_version=2)
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Start the hub (and, with persisted store IDs, its coordinator), then forward platforms.
 
     The hub is runtime data before it starts: the write adapter reads the opened witness
     from it. Any setup failure performs the same fenced shutdown as an unload.
     """
-    from homeassistant.exceptions import ConfigEntryNotReady
+    from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
 
-    from . import hub as hub_module
+    # Permanent, non-mutating cutoff before hub, registry, storage or issue work.
+    if entry.data.get(CONF_CONNECTION_BACKEND) != BACKEND_OWNED:
+        raise ConfigEntryError(translation_domain=DOMAIN, translation_key="legacy_backend_removed")
+
     from .hub import FreshFeedHub
-    from .migration import in_migration
-
-    # Migration admission precedes any hub or source construction: a migration
-    # call in progress, or an unfinished journal, fences startup. Existing
-    # entity registry rows remain (states unavailable) meanwhile.
-    if in_migration(hass, entry) or not await hub_module.async_migration_admits(hass, entry):
-        raise ConfigEntryNotReady(hub_module.MIGRATION_PENDING)
 
     # A hub whose failed-setup shutdown could not drain still owns its parked
     # coordinator: no replacement starts until that drain succeeds.
@@ -53,8 +64,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hub = FreshFeedHub(hass, entry)
     entry.runtime_data = hub
     try:
-        # Admission was decided above for this setup: not re-derived by the hub.
-        await hub.async_start(migration_admitted=True)
+        await hub.async_start()
         await hass.config_entries.async_forward_entry_setups(entry, list(PLATFORMS))
     except BaseException:
         # Retained until a successful drain, including if this cleanup is cancelled.
@@ -80,32 +90,16 @@ async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     # exactly once itself: never a second, listener-driven reload.
     if entry.entry_id in hass.data.get(DOMAIN, {}).get(TRANSITIONS_KEY, ()):
         return
-    # An open migration (staged connection) reloads only when its coordinator
-    # requests it after committing owned fields; never from this listener.
-    if CONF_MIGRATION_STAGED_CONNECTION in entry.data:
-        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Remove the persisted event history and migration journal of a deleted entry.
-
-    The retained-intent store is deliberately left in place: it is never cleared.
-    A journal that cannot be removed safely is left behind (it is keyed by this
-    entry's unique ID, so no later entry can adopt it).
-    """
+    """Remove observation history; retain intent storage and all historical leftovers."""
     from homeassistant.helpers.storage import Store
-
-    from .migration_journal import MigrationJournal
-    from .migration_state import MigrationFault
 
     from .repairs import async_remove_entry_issues
     async_remove_entry_issues(hass, entry.entry_id)
     await Store(hass, 1, f"{DOMAIN}.{entry.entry_id}").async_remove()
-    try:
-        await MigrationJournal(hass.config.config_dir, entry.entry_id).async_remove()
-    except MigrationFault:
-        pass
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

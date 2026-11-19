@@ -1,8 +1,6 @@
 """Config flow for PetSafe FreshFeed.
 
-Two ways to add a feeder:
-
-* "Sign in with PetSafe" (offered only when the app profile is bundled): one
+"Sign in with PetSafe" (offered only when the app profile is bundled): one
   account sign-in per submit, at most one submit per 60 s per Home Assistant
   instance. The selected feeder's device ID and local key, plus a located or
   typed RFC 1918 address, become a PetSafe-owned local connection only after a
@@ -14,10 +12,7 @@ Two ways to add a feeder:
   single-use ``SignIn`` and is never kept; no email, password or session is
   persisted. Nothing about the account, the key, the device ID or the host is
   logged here.
-* "Use an existing Tuya Local entry" (legacy): pick a tuya_local
-  petsafe_freshfeed_raw entry, unchanged for unmigrated users.
-
-Controls are opt-in. Choosing ``enable_controls`` (on the legacy pick, or in
+Controls are opt-in. Choosing ``enable_controls`` (in
 the options flow for an existing read-only entry) is the ONLY path that
 provisions the retained-intent store. It provisions exactly once with a fresh
 random store ID under the entry's registry leaf, and persists the IDs only after
@@ -33,6 +28,7 @@ set up exactly once.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 import functools
 import ipaddress
@@ -43,6 +39,7 @@ from uuid import uuid4
 import voluptuous as vol
 from homeassistant.config_entries import (
     SOURCE_IGNORE,
+    SOURCE_REAUTH,
     ConfigEntry,
     ConfigEntryState,
     ConfigFlow,
@@ -62,14 +59,13 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-from . import account, lan_locate, migration, store_bootstrap
+from . import account, lan_locate, store_bootstrap
 from .owned_source import (
     SUPPORTED_PROTOCOLS, UNSUPPORTED_CONFIGURATION, LocalConnection, LocalConnectionError,
     OwnedSource, OwnedSourceError,
 )
-from .source_lookup import DP145_RE, LEAF_RE, binding_id, owned_binding_id, profile_type
+from .source_lookup import owned_binding_id
 from .const import (
-    BACKEND_LEGACY,
     BACKEND_OWNED,
     CONF_CONNECTION_BACKEND,
     CONF_DEVICE_ID,
@@ -78,22 +74,15 @@ from .const import (
     CONF_INTENT_BINDING_ID,
     CONF_INTENT_STORE_ID,
     CONF_LOCAL_KEY,
-    CONF_MIGRATION_STAGED_CONNECTION,
     CONF_PROTOCOL_VERSION,
     CONF_SOURCE_ENTRY_ID,
     DOMAIN,
     INTENT_STORE_ROOT,
     SOURCE_DOMAIN,
-    SOURCE_PROFILE,
     TRANSITIONS_KEY,
 )
 
 _CONTROLS = vol.Optional(CONF_ENABLE_CONTROLS, default=False)
-# Moved to source_lookup (shared with the hub and migration); names kept for callers.
-_DP145_RE = DP145_RE
-_LEAF_RE = LEAF_RE
-_profile = profile_type
-_binding_id = binding_id
 
 # --- account sign-in path -------------------------------------------------------
 
@@ -108,6 +97,7 @@ ADMISSION_FAILED = "local_admission_failed"
 _PROFILE_KEY = "account_app_profile"
 _SUBMIT_AT_KEY = "account_submit_at"
 # Account-lock protection: at most one password-bearing submit per window per hass.
+_CLOUD_DISABLE_GENERATIONS = "_cloud_disable_generations"
 SUBMIT_COOLDOWN_S = 60.0
 DISCOVER_DEADLINE_S = 30.0
 # Indirection so tests can drive the cooldown with a fake clock.
@@ -191,9 +181,9 @@ async def _async_provision(hass, leaf_id: str | None) -> dict[str, str] | str:
 
 
 def _physical_ids(entry: ConfigEntry) -> set:
-    """Physical device IDs a config entry names (data, options, staged connection)."""
+    """Physical device IDs named by active config data or options."""
     found = set()
-    for container in (entry.data, entry.options, entry.data.get(CONF_MIGRATION_STAGED_CONNECTION)):
+    for container in (entry.data, entry.options):
         if isinstance(container, Mapping):
             value = container.get(CONF_DEVICE_ID)
             if type(value) is str and value:
@@ -229,6 +219,17 @@ class FreshFeedConfigFlow(ConfigFlow, domain=DOMAIN):
     """Account sign-in to an owned entry, or the legacy tuya_local pick."""
 
     VERSION = 1
+    MINOR_VERSION = 2
+    _cloud_session = None
+    _reauth_entry = None
+
+    async def async_step_reauth(self, entry_data):
+        self._reauth_entry = self._get_reauth_entry()
+        generations = self.hass.data.setdefault(DOMAIN, {}).setdefault(_CLOUD_DISABLE_GENERATIONS, {})
+        self._reauth_generation = generations.get(self._reauth_entry.entry_id, 0)
+        if self._reauth_entry.data.get(CONF_CONNECTION_BACKEND) != BACKEND_OWNED:
+            return self._abort("legacy_backend_removed")
+        return await self.async_step_account()
 
     # Account-path state; lives only until the flow finishes or is removed.
     _feeders: tuple = ()
@@ -243,101 +244,10 @@ class FreshFeedConfigFlow(ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         return FreshFeedOptionsFlow()
 
-    def _candidates(self) -> list[ConfigEntry]:
-        return [
-            entry
-            for entry in self.hass.config_entries.async_entries(SOURCE_DOMAIN)
-            if _profile(entry) == SOURCE_PROFILE
-        ]
-
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        if await _async_app_profile(self.hass) is None:
-            return await self._async_step_pick("user", user_input)
-        return self.async_show_menu(
-            step_id="user", menu_options=["account", "existing"],
-            description_placeholders={"title": "your FreshFeed"})
-
-    async def async_step_existing(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        return await self._async_step_pick("existing", user_input)
-
-    # --- legacy path ------------------------------------------------------------
-
-    def _owned_duplicate_of_source(self, source_entry_id: str) -> bool:
-        """The legacy source's feeder already has an owned/migrated PetSafe entry."""
-        source = self.hass.config_entries.async_get_entry(source_entry_id)
-        if source is None:
-            return False
-        devices = _physical_ids(source)
-        return any(devices & _physical_ids(ours)
-                   for ours in self.hass.config_entries.async_entries(DOMAIN, include_ignore=False)
-                   if ours.data.get(CONF_CONNECTION_BACKEND) == BACKEND_OWNED
-                   or CONF_DEVICE_ID in ours.data)
-
-    async def _async_create_legacy(
-        self, source_entry_id: str, title: str, enable_controls: bool
-    ) -> ConfigFlowResult:
-        """Create a legacy entry for a tuya_local source entry."""
-        await self.async_set_unique_id(source_entry_id)
-        self._abort_if_unique_id_configured()
-        if self._owned_duplicate_of_source(source_entry_id):
-            return self.async_abort(reason="already_configured")
-        data = {CONF_SOURCE_ENTRY_ID: source_entry_id}
-        if enable_controls:
-            provisioned = await _async_provision(self.hass, _binding_id(self.hass, source_entry_id))
-            if isinstance(provisioned, str):
-                return self.async_abort(reason=provisioned)
-            data.update(provisioned)
-        return self.async_create_entry(title=title, data=data)
-
-    async def _async_step_pick(
-        self, step_id: str, user_input: dict[str, Any] | None
-    ) -> ConfigFlowResult:
-        """The existing path: pick a tuya_local petsafe_freshfeed_raw entry."""
-        candidates = self._candidates()
-        if not candidates:
-            return self.async_abort(reason="no_source")
-
-        if user_input is not None:
-            if len(candidates) == 1:
-                source = candidates[0]
-            else:
-                by_id = {entry.entry_id: entry for entry in candidates}
-                source = by_id.get(user_input.get(CONF_SOURCE_ENTRY_ID))
-                if source is None:
-                    return self.async_abort(reason="no_source")
-            return await self._async_create_legacy(
-                source.entry_id, source.title, user_input.get(CONF_ENABLE_CONTROLS) is True)
-
-        if len(candidates) == 1:
-            await self.async_set_unique_id(candidates[0].entry_id)
-            self._abort_if_unique_id_configured()
-            if self._owned_duplicate_of_source(candidates[0].entry_id):
-                return self.async_abort(reason="already_configured")
-            return self.async_show_form(
-                step_id=step_id,
-                data_schema=vol.Schema({_CONTROLS: bool}),
-                description_placeholders={"title": candidates[0].title},
-            )
-
-        options = [
-            SelectOptionDict(value=entry.entry_id, label=entry.title) for entry in candidates
-        ]
-        return self.async_show_form(
-            step_id=step_id,
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_SOURCE_ENTRY_ID): SelectSelector(
-                        SelectSelectorConfig(options=options)
-                    ),
-                    _CONTROLS: bool,
-                }
-            ),
-            description_placeholders={"title": "the selected tuya_local FreshFeed device"},
-        )
+        return await self.async_step_account(user_input)
 
     # --- account path -------------------------------------------------------------
 
@@ -348,6 +258,7 @@ class FreshFeedConfigFlow(ConfigFlow, domain=DOMAIN):
         self._feeder = None
         self._located = None
         self._host = None
+        self._cloud_session = None
 
     @callback
     def async_remove(self) -> None:
@@ -381,12 +292,24 @@ class FreshFeedConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_account(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        # Remove credentials before the first cancellable profile lookup.
+        submitted_password = user_input.pop(CONF_PASSWORD, None) if user_input is not None else None
         profile = await _async_app_profile(self.hass)
+        if self._reauth_entry is not None:
+            generations = self.hass.data.setdefault(DOMAIN, {}).setdefault(_CLOUD_DISABLE_GENERATIONS, {})
+            if generations.get(self._reauth_entry.entry_id, 0) != self._reauth_generation:
+                if user_input is not None:
+                    user_input.pop(CONF_PASSWORD, None)
+                return self._abort("aborted")
         if profile is None:
+            if user_input is not None:
+                user_input.pop(CONF_PASSWORD, None)
             return self._abort("account_unavailable")
         # Take the password out of the submitted mapping at once; it is used only to
         # build the single-use SignIn below.
         password = None if user_input is None else user_input.pop(CONF_PASSWORD, None)
+        password = submitted_password
+        del submitted_password
         if user_input is None:
             return self._account_form({})
         email = user_input.get(CONF_EMAIL)
@@ -416,7 +339,26 @@ class FreshFeedConfigFlow(ConfigFlow, domain=DOMAIN):
             return self._account_form(
                 {"base": _OUTCOME_ERRORS.get(discovery.outcome, "cannot_connect")})
         feeders = tuple(discovery.feeders)
+        self._cloud_session = discovery.session
         del discovery
+        if self._reauth_entry is not None:
+            entry = self._reauth_entry
+            generations = self.hass.data.setdefault(DOMAIN, {}).setdefault(_CLOUD_DISABLE_GENERATIONS, {})
+            if generations.get(entry.entry_id, 0) != self._reauth_generation:
+                return self._abort("aborted")
+            if not any(f.device_id == entry.data.get(CONF_DEVICE_ID) for f in feeders):
+                self._cloud_session = None
+                return self._account_form({"base": "wrong_account"})
+            if self._cloud_session is None:
+                return self._account_form({"base": "invalid_auth"})
+            data = {**entry.data, "cloud_session": self._cloud_session.storage_data(),
+                    "cloud_route": self._cloud_session.storage_route()}
+            from .repairs import async_cloud_auth_issue
+            async_cloud_auth_issue(self.hass, entry, False)
+            self._clear()
+            return self.async_update_reload_and_abort(
+                entry, data_updates=data,
+                options={**entry.options, "cloud_read_enabled": True})
         if not feeders:
             return self._account_form({"base": "no_feeders"})
         if len(feeders) == 1:
@@ -536,11 +478,15 @@ class FreshFeedConfigFlow(ConfigFlow, domain=DOMAIN):
                 CONF_HOST: host,
                 CONF_PROTOCOL_VERSION: OWNED_PROTOCOL,
             }
+            if self._cloud_session is not None:
+                data["cloud_session"] = self._cloud_session.storage_data()
+                data["cloud_route"] = self._cloud_session.storage_route()
             title = feeder.name
             del feeder
             self._clear()
             return self.async_create_entry(
-                title=title, data=data, description=CREATED_READ_ONLY,
+                title=title, data=data, options={"cloud_read_enabled": True},
+                description=CREATED_READ_ONLY,
                 description_placeholders={"name": title})
         except AbortFlow:
             self._clear()
@@ -565,10 +511,8 @@ class FreshFeedConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         entry = self._get_reconfigure_entry()
         data = entry.data
-        if data.get(CONF_CONNECTION_BACKEND, BACKEND_LEGACY) != BACKEND_OWNED:
-            return self.async_abort(reason="reconfigure_unsupported")
-        if CONF_MIGRATION_STAGED_CONNECTION in data:
-            return self.async_abort(reason="migration_pending")
+        if data.get(CONF_CONNECTION_BACKEND) != BACKEND_OWNED:
+            return self.async_abort(reason="legacy_backend_removed")
         if data.get(CONF_PROTOCOL_VERSION) not in SUPPORTED_PROTOCOLS:
             return self.async_abort(reason=UNSUPPORTED_CONFIGURATION)
         if user_input is None:
@@ -611,56 +555,76 @@ class FreshFeedConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_abort(reason="reconfigure_successful")
 
 
-_MIGRATION_REASONS = {
-    migration.MigrationStatus.RESTART_REQUIRED: "migration_restart_required",
-    migration.MigrationStatus.READY_TO_RESUME: "migration_ready_to_resume",
-    migration.MigrationStatus.FORWARD_REPAIR_REQUIRED: "migration_forward_repair_required",
-    migration.MigrationStatus.COMPLETE: "migration_complete",
-    migration.MigrationStatus.CANCELLED: "migration_cancelled",
-    migration.MigrationStatus.REFUSED: "migration_refused",
-}
-
-
 class FreshFeedOptionsFlow(OptionsFlow):
-    """Enable controls explicitly (never disables/clears), and drive an explicit migration.
-
-    Without an applicable migration choice the init step is the existing
-    enable-controls form. Otherwise it is a menu of the applicable choices:
-    ``controls`` (same form), ``migrate`` (legacy entries; preview, optional
-    host/protocol correction, then the staged prepare), ``resume`` / ``cancel``
-    for an unfinished journal, and ``remove_source`` only once a later process
-    re-observed the verified handoff. Every outcome is a fixed abort reason.
-    """
-
-    _host: str | None = None
-    _protocol: str | None = None
-    _acknowledged: tuple | None = None
+    """Enable owned controls explicitly; never clear or replace retained storage."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         entry = self.config_entry
+        if entry.data.get(CONF_CONNECTION_BACKEND) != BACKEND_OWNED:
+            return self.async_abort(reason="legacy_backend_removed")
+        if user_input is not None and "cloud_read_enabled" in user_input:
+            if user_input["cloud_read_enabled"] is False:
+                generations = self.hass.data.setdefault(DOMAIN, {}).setdefault(_CLOUD_DISABLE_GENERATIONS, {})
+                generations[entry.entry_id] = generations.get(entry.entry_id, 0) + 1
+                # A pending sign-in must not send a password after Fully local,
+                # nor block a fresh flow when cloud reads are enabled again.
+                for flow in self.hass.config_entries.flow.async_progress_by_handler(DOMAIN):
+                    context = flow.get("context", {})
+                    if (context.get("source") == SOURCE_REAUTH
+                            and context.get("entry_id") == entry.entry_id):
+                        self.hass.config_entries.flow.async_abort(flow["flow_id"])
+            if user_input["cloud_read_enabled"] is False and (
+                entry.options.get("cloud_read_enabled", False)
+                or "cloud_session" in entry.data or "cloud_route" in entry.data
+            ):
+                helper = getattr(getattr(entry, "runtime_data", None), "cloud_read", None)
+                if helper is not None and hasattr(helper, "invalidate"):
+                    # Fence a read completing before close() runs.
+                    helper.invalidate()
+                adapter = getattr(getattr(entry, "runtime_data", None), "adapter", None)
+                if adapter is not None:
+                    adapter.clear_cloud_evidence()
+                data = dict(entry.data)
+                data.pop("cloud_session", None)
+                data.pop("cloud_route", None)
+                options = {**entry.options, "cloud_read_enabled": False}
+                self.hass.config_entries.async_update_entry(entry, data=data, options=options)
+                from .repairs import async_cloud_auth_issue
+                async_cloud_auth_issue(self.hass, entry, False)
+                if helper is not None:
+                    await asyncio.shield(asyncio.create_task(helper.close()))
+                if (user_input.get(CONF_ENABLE_CONTROLS) is True
+                        and await self._controls_refusal() != "controls_already_enabled"):
+                    return await self._async_controls(user_input)
+                return self.async_create_entry(data=options)
+            if user_input["cloud_read_enabled"] is True and not entry.options.get("cloud_read_enabled", False):
+                if (user_input.get(CONF_ENABLE_CONTROLS) is True
+                        and await self._controls_refusal() != "controls_already_enabled"):
+                    result = await self._async_controls(user_input)
+                    if result["type"] != "create_entry":
+                        return result
+                entry.async_start_reauth(self.hass)
+                return self.async_abort(reason="cloud_sign_in")
         if user_input is not None:
             return await self._async_controls(user_input)
-        choices = await migration.async_options_choices(self.hass, entry)
-        refusal = await self._controls_refusal()
-        if not choices:
-            if refusal is not None:
-                return self.async_abort(reason=refusal)
-            return self._controls_form("init")
-        menu = (["controls"] if refusal is None else []) + list(choices)
-        return self.async_show_menu(step_id="init", menu_options=menu)
+        return self._controls_form("init")
 
     async def _controls_refusal(self) -> str | None:
         entry = self.config_entry
+        if entry.data.get(CONF_CONNECTION_BACKEND) != BACKEND_OWNED:
+            return "legacy_backend_removed"
         if CONF_INTENT_STORE_ID in entry.data or CONF_INTENT_BINDING_ID in entry.data:
             return "controls_already_enabled"
-        if await migration.async_controls_fenced(self.hass, entry):
-            return "migration_pending"
         return None
 
     def _controls_form(self, step_id: str) -> ConfigFlowResult:
-        return self.async_show_form(step_id=step_id, data_schema=vol.Schema({_CONTROLS: bool}))
+        schema = {_CONTROLS: bool}
+        if step_id == "init":
+            schema[vol.Optional("cloud_read_enabled", default=self.config_entry.options.get(
+                "cloud_read_enabled", False))] = bool
+        return self.async_show_form(step_id=step_id, data_schema=vol.Schema(schema))
 
     async def async_step_controls(
         self, user_input: dict[str, Any] | None = None
@@ -674,19 +638,12 @@ class FreshFeedOptionsFlow(OptionsFlow):
 
     async def _async_controls(self, user_input: dict[str, Any]) -> ConfigFlowResult:
         entry = self.config_entry
+        if user_input.get(CONF_ENABLE_CONTROLS) is not True:
+            return self.async_create_entry(data=dict(entry.options))
         refusal = await self._controls_refusal()
         if refusal is not None:
             return self.async_abort(reason=refusal)
-        if user_input.get(CONF_ENABLE_CONTROLS) is not True:
-            return self.async_create_entry(data={})
-        backend = entry.data.get(CONF_CONNECTION_BACKEND, BACKEND_LEGACY)
-        if backend == BACKEND_OWNED:
-            # The leaf this entry's own setup created (or its migrated leaf).
-            leaf_id = owned_binding_id(self.hass, entry)
-        elif backend == BACKEND_LEGACY and type(entry.data.get(CONF_SOURCE_ENTRY_ID)) is str:
-            leaf_id = _binding_id(self.hass, entry.data[CONF_SOURCE_ENTRY_ID])
-        else:
-            leaf_id = None
+        leaf_id = owned_binding_id(self.hass, entry)
         provisioned = await _async_provision(self.hass, leaf_id)
         if isinstance(provisioned, str):
             return self.async_abort(reason=provisioned)
@@ -694,111 +651,4 @@ class FreshFeedOptionsFlow(OptionsFlow):
         # migration fields; the update listener reloads the entry.
         self.hass.config_entries.async_update_entry(
             entry, data={**entry.data, **provisioned})
-        return self.async_create_entry(data={})
-
-    # --- explicit migration -----------------------------------------------------
-
-    def _migration_abort(self, status) -> ConfigFlowResult:
-        return self.async_abort(reason=_MIGRATION_REASONS.get(status, "migration_refused"))
-
-    async def async_step_migrate(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Preview (retiring raw entity IDs only), then the staged prepare."""
-        entry = self.config_entry
-        preview = await migration.async_preflight_migration(
-            self.hass, entry, host=self._host, protocol=self._protocol)
-        if not preview.eligible:
-            if (preview.reason is migration.PreviewReason.UNSUPPORTED_SHAPE and self._host is None
-                    and await migration.async_migration_correctable(self.hass, entry)):
-                return await self.async_step_migrate_host()
-            return self.async_abort(reason=f"migration_{preview.reason.value}")
-        if user_input is None or self._acknowledged is None:
-            self._acknowledged = preview.retiring_entity_ids
-            return self.async_show_form(
-                step_id="migrate", data_schema=vol.Schema({}),
-                description_placeholders={
-                    "count": str(len(preview.retiring_entity_ids)),
-                    "retiring": ", ".join(preview.retiring_entity_ids) or "-"})
-        status = await migration.async_prepare_migration(
-            self.hass, entry, host=self._host, protocol=self._protocol,
-            acknowledged=self._acknowledged)
-        return self._migration_abort(status)
-
-    async def async_step_migrate_host(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Correction form: an explicit RFC 1918 address and protocol 3.5."""
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            host = _lan_ipv4(user_input.get(CONF_HOST))
-            protocol = user_input.get(CONF_PROTOCOL_VERSION)
-            if host is None:
-                errors[CONF_HOST] = "invalid_host"
-            elif protocol not in SUPPORTED_PROTOCOLS:
-                errors["base"] = UNSUPPORTED_CONFIGURATION
-            else:
-                preview = await migration.async_preflight_migration(
-                    self.hass, self.config_entry, host=host, protocol=protocol)
-                if preview.eligible:
-                    self._host, self._protocol = host, protocol
-                    return await self.async_step_migrate()
-                if preview.reason is not migration.PreviewReason.UNSUPPORTED_SHAPE:
-                    return self.async_abort(reason=f"migration_{preview.reason.value}")
-                errors["base"] = UNSUPPORTED_CONFIGURATION
-        return self.async_show_form(
-            step_id="migrate_host",
-            data_schema=vol.Schema({
-                vol.Required(CONF_HOST): TextSelector(),
-                vol.Required(CONF_PROTOCOL_VERSION, default=OWNED_PROTOCOL): SelectSelector(
-                    SelectSelectorConfig(options=sorted(SUPPORTED_PROTOCOLS))),
-            }),
-            errors=errors,
-        )
-
-    async def async_step_resume(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Continue (or forward-repair) the migration; optional host/key corrections.
-
-        The local key is only for forward repair after the move when the Tuya
-        Local entry was deleted or changed; it is never shown or filled back in.
-        """
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            raw = user_input.get(CONF_HOST)
-            host = None if raw in (None, "") else _lan_ipv4(raw)
-            key = user_input.get(CONF_LOCAL_KEY)
-            key = None if key in (None, "") else key
-            if raw not in (None, "") and host is None:
-                errors[CONF_HOST] = "invalid_host"
-            else:
-                status = await migration.async_resume_migration(
-                    self.hass, self.config_entry, host=host, local_key=key)
-                del key
-                return self._migration_abort(status)
-        return self.async_show_form(
-            step_id="resume",
-            data_schema=vol.Schema({
-                vol.Optional(CONF_HOST): TextSelector(),
-                vol.Optional(CONF_LOCAL_KEY): TextSelector(
-                    TextSelectorConfig(type=TextSelectorType.PASSWORD, autocomplete="off")),
-            }),
-            errors=errors,
-        )
-
-    async def async_step_cancel(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        if user_input is None:
-            return self.async_show_form(step_id="cancel", data_schema=vol.Schema({}))
-        return self._migration_abort(
-            await migration.async_cancel_migration(self.hass, self.config_entry))
-
-    async def async_step_remove_source(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        if user_input is None:
-            return self.async_show_form(step_id="remove_source", data_schema=vol.Schema({}))
-        return self._migration_abort(
-            await migration.async_remove_source(self.hass, self.config_entry))
+        return self.async_create_entry(data=dict(entry.options))

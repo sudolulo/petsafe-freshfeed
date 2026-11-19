@@ -97,6 +97,7 @@ async def test_cancel_real_service_response_drives_dom_latch(
             _queue_reports(ctx, {'140': 'EAAA'})
         if failure == 'pre_dispatch':
             # Real socket loss makes the transport reject BEFORE executor dispatch.
+            ctx.device.refuse = True
             ctx.api.socket.close()
     finally:
         if stage == 'lock':
@@ -151,7 +152,7 @@ async def test_cancel_rechecks_wait_boundaries(adapters, store, writes, monkeypa
     original = ctx.hass.async_add_executor_job
     if stage == 'provenance':
         def gated(func, *args):
-            if func != ctx.bridge._code_ok:
+            if func != ctx.bridge.code_ok:
                 return original(func, *args)
             async def run():
                 entered.set()
@@ -221,26 +222,33 @@ async def test_cancel_duplicate_uncertainty_and_current_session_recovery(adapter
 @pytest.mark.parametrize('final,expected', [('IAAA', 'verified'), ('IAQA', 'idle')])
 async def test_cancel_ack_origin_epoch_sequence_and_command(adapters, store, writes, final, expected):
     from custom_components.petsafe_freshfeed.services import acknowledgement
-    from custom_components.petsafe_freshfeed.tuya_bridge import DeviceReport
+    from custom_components.petsafe_freshfeed.local_source import DeviceReport
     ctx = adapters
     adapter = await _adapter(ctx, await _provision(store), ack=acknowledgement)
     _queue_reports(ctx, PENDING)
-    from test_tuya_bridge import _frame
-    ctx.api.response = _frame({'140': 'IAAA'})  # uncorrelated exchange is not an ack
+    from owned_test_support import _frame
+    seen = []
+    ctx.bridge.subscribe(seen.append, lambda *args: None)
+    ctx.device.response = _frame({'140': 'IAAA'})  # uncorrelated exchange is not an ack
     assert (await adapter.async_submit('cancel', PAYLOAD, confirmed=True))['state'] == 'uncertain'
     context = adapter._current
     (mark,) = adapter._marks.values()
+    matching = [report for report in seen if report.dps == {'140': 'IAAA'}]
+    assert len(matching) == 1
+    assert matching[0].sequence > mark.sequence and matching[0].ack_eligible is False
     for report in (DeviceReport(mark.epoch, mark.sequence, dt_util.utcnow(), {'140': 'IAAA'}),
                    DeviceReport(mark.epoch + 1, mark.sequence + 50, dt_util.utcnow(), {'140': 'IAAA'}),
                    DeviceReport(mark.epoch, mark.sequence + 1, dt_util.utcnow(),
                                 {'140': 'IAAA'}, ack_eligible=False)):
         adapter.on_report(report)
-    _queue_reports(ctx, {'140': 'IAEA'}, {'140': 'EAAA'})
+    _queue_reports(ctx, {'140': 'EAEA'}, {'140': 'EAAA'})
     await asyncio.sleep(0)
     assert adapter.view['state'] == 'uncertain'
     _push(ctx, {'140': final})
     await until(lambda: adapter.view['state'] == expected)
     assert adapter._current is context
+    if final == 'IAAA':
+        assert adapter.view['can_defrost'] is True
     assert len(writes) == 1
     if final == 'IAQA':
         assert adapter.view['reason'] == 'observed_failure'
@@ -257,7 +265,10 @@ async def test_cancel_ack_origin_epoch_sequence_and_command(adapters, store, wri
             'session_id': context.session_id,
         }
         actual['observed_failure'] = dict(actual['observed_failure'], operation_id='cancel-op', session_id='session')
-        assert actual == dict(fixture['attributes'], state=fixture['state'])
+        expected_view = dict(fixture['attributes'], state=fixture['state'], can_feed=True,
+                             can_defrost=True, cancel_reason='cancel_not_pending',
+                             blocked_reason='already_refilled')
+        assert actual == expected_view
         # A later admitted operation cannot carry this terminal outcome forward.
         _queue_reports(ctx, PENDING)
         await adapter.async_submit('cancel', PAYLOAD, confirmed=True)

@@ -166,7 +166,8 @@ class Reason(_enum.Enum):
     """Closed label: which category of check failed. Chosen only by this
     harness's own code, never derived from server data.
 
-    ``SERVER_ERROR_CODE``: a non-empty string ``errorCode`` (mapped or not).
+    ``SESSION_REJECTED``: the recognized invalid-session error code.
+    ``SERVER_ERROR_CODE``: any other non-empty string ``errorCode``.
     ``SERVER_ERROR_FLAG``: ``success`` false or a non-empty ``errorMsg``.
     ``TRANSPORT_BIND``/``_CONNECT``/``_STATUS``/``_ENCODING``/``_LENGTH``/
     ``_IO``: the exchange raised a ``exchange.ExchangeFailed`` whose
@@ -181,6 +182,7 @@ class Reason(_enum.Enum):
 
     NONE = "NONE"
     SERVER_ERROR_CODE = "SERVER_ERROR_CODE"
+    SESSION_REJECTED = "SESSION_REJECTED"
     SERVER_ERROR_FLAG = "SERVER_ERROR_FLAG"
     OUTER_SHAPE = "OUTER_SHAPE"
     SEAL = "SEAL"
@@ -462,9 +464,9 @@ class Discovery(_Sealed):
     feeders (empty on every failure) and the closed ``Stage``/``Reason``
     labels, which are for debug logging only."""
 
-    __slots__ = ("_outcome", "_feeders", "_stage", "_reason")
+    __slots__ = ("_outcome", "_feeders", "_stage", "_reason", "_session")
 
-    def __init__(self, outcome, feeders=(), *, stage=Stage.NONE, reason=Reason.NONE) -> None:
+    def __init__(self, outcome, feeders=(), *, stage=Stage.NONE, reason=Reason.NONE, session=None) -> None:
         if type(outcome) is not Outcome or type(stage) is not Stage or type(reason) is not Reason:
             raise ValueError("invalid label")
         feeders = tuple(feeders)
@@ -476,12 +478,18 @@ class Discovery(_Sealed):
             raise ValueError("invalid label")
         object.__setattr__(self, "_outcome", outcome)
         object.__setattr__(self, "_feeders", feeders)
+        object.__setattr__(self, "_session", session)
         object.__setattr__(self, "_stage", stage)
         object.__setattr__(self, "_reason", reason)
 
     @property
     def outcome(self):
         return self._outcome
+
+    @property
+    def session(self):
+        """Opaque optional login-to-storage handoff; never in SafeResult."""
+        return self._session
 
     @property
     def feeders(self):
@@ -708,6 +716,8 @@ def _check_outer(parsed) -> None:
         if not code:
             # An empty string code is not a server error code (Reason doc).
             raise _Stop(Outcome.PROTOCOL_ERROR, Reason.OUTER_SHAPE)
+        if code == "USER_SESSION_INVALID":
+            raise _Stop(Outcome.PROTOCOL_ERROR, Reason.SESSION_REJECTED)
         raise _Stop(_ERROR_OUTCOMES.get(code, Outcome.PROTOCOL_ERROR),
                     Reason.SERVER_ERROR_CODE)
     if parsed.get("success") is False or ("errorMsg" in parsed and parsed["errorMsg"]):
@@ -780,6 +790,8 @@ def _check_level_error(level) -> None:
         # _check_decoded admits plain JSON types only).
         if code:
             if type(code) is str:
+                if code == "USER_SESSION_INVALID":
+                    raise _Stop(Outcome.PROTOCOL_ERROR, Reason.SESSION_REJECTED)
                 raise _Stop(_ERROR_OUTCOMES.get(code, Outcome.PROTOCOL_ERROR),
                             Reason.SERVER_ERROR_CODE)
             raise _Stop(Outcome.PROTOCOL_ERROR, Reason.FIELD_TYPE)
@@ -1085,6 +1097,11 @@ def _token_material(decoded):
 _LOGIN_REQUIRED = ("sid", "ecode", "uid")
 
 
+def _session_secret_valid(value):
+    return (type(value) is str and 1 <= len(value) <= 1024
+            and all(33 <= ord(char) <= 126 for char in value))
+
+
 def _check_login(decoded, route, contract):
     """Validate the session response shape and any server-directed route.
     The session values stay with the opaque profile; nothing is retained.
@@ -1099,7 +1116,8 @@ def _check_login(decoded, route, contract):
         if key not in decoded:
             raise _Stop(Outcome.PROTOCOL_ERROR, Reason.MISSING_FIELD)
         value = decoded[key]
-        if type(value) is not str or not value:
+        if (type(value) is not str or not value
+                or (key in ("sid", "ecode") and not _session_secret_valid(value))):
             raise _Stop(Outcome.PROTOCOL_ERROR, Reason.FIELD_TYPE)
     urls = _directed_values(decoded)
     routes = [_directed(url, route, contract) for url in urls]
@@ -1205,6 +1223,7 @@ class AccountClient:
         self._contract = contract
         self._permit = permit
         self._final = None
+        self._session_route = None
 
     def __repr__(self) -> str:
         return "<AccountClient>"
@@ -1356,6 +1375,7 @@ class AccountClient:
                         if local_key is not None and products[dev_id])
         result = SafeResult(Outcome.OK, len(homes), len(products), supported_count,
                             route.api_domain, key_count=key_count, name_count=name_count)
+        self._session_route = route
         return result, feeders
 
     def _call(self, operation, business, route, deadline, *, password=False):

@@ -11,15 +11,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = 'custom_components/petsafe_freshfeed/'
-RUNTIME = '''__init__.py binary_sensor.py config_flow.py const.py critical_transport.py entity.py event.py hub.py lifecycle.py observed.py quick_feed.py schedule_codec.py schedule_state.py sensor.py services.py source_binding.py sqlite_witness.py store_bootstrap.py tuya_bridge.py tuya_compat.py write_adapter.py manifest.json strings.json services.yaml tuya_fingerprints.json translations/en.json account/__init__.py account/boundary.py account/client.py account/profile.py account/exchange.py account/protocol_contract.json lan_locate.py source_lookup.py local_source.py owned_source.py owned_compat.py owned_fingerprints.json migration_state.py migration_journal.py migration.py switch.py number.py owned_setting.py diagnostics.py repairs.py device_trigger.py'''.split()
+RUNTIME = '''__init__.py cloud_read.py binary_sensor.py config_flow.py const.py critical_transport.py entity.py event.py hub.py lifecycle.py observed.py quick_feed.py schedule_codec.py schedule_state.py sensor.py services.py sqlite_witness.py store_bootstrap.py write_adapter.py manifest.json strings.json services.yaml translations/en.json account/__init__.py account/boundary.py account/client.py account/profile.py account/exchange.py account/protocol_contract.json lan_locate.py source_lookup.py local_source.py owned_source.py owned_compat.py owned_fingerprints.json switch.py number.py owned_setting.py diagnostics.py repairs.py device_trigger.py'''.split()
 COMMON = {'LICENSE': 'LICENSE', 'NOTICE': 'distribution/NOTICE-public', 'assets/brand/logo.svg': 'assets/brand/logo.svg', 'assets/brand/readme.png': 'assets/brand/readme.png'}
-PROFILE = 'examples/tuya_local/petsafe_freshfeed_raw.yaml'
 BLUEPRINTS = (
     'blueprints/automation/petsafe_freshfeed/low_estimated_meals.yaml',
     'blueprints/automation/petsafe_freshfeed/feeder_attention.yaml',
     'blueprints/automation/petsafe_freshfeed/refill_cleaning_reminder.yaml',
 )
-INTEGRATION = {**{path: path for path in BLUEPRINTS}, **COMMON, **{COMPONENT + n: COMPONENT + n for n in RUNTIME}, COMPONENT + 'brand/icon.png': 'assets/brand/icon.png', 'README.md': 'distribution/README-integration.md', 'hacs.json': 'distribution/hacs-integration.json', '.github/workflows/validate.yml': 'distribution/workflow-integration.yml', PROFILE: 'config/tuya_local/petsafe_freshfeed_raw.yaml'}
+INTEGRATION = {**{path: path for path in BLUEPRINTS}, **COMMON, **{COMPONENT + n: COMPONENT + n for n in RUNTIME}, COMPONENT + 'brand/icon.png': 'assets/brand/icon.png', 'README.md': 'distribution/README-integration.md', 'hacs.json': 'distribution/hacs-integration.json', '.github/workflows/validate.yml': 'distribution/workflow-integration.yml'}
 CARD = {**COMMON, 'dist/pet-feeder-card.js': 'card/pet-feeder-card.js', 'dist/freshfeed-model.js': 'card/freshfeed-model.js', 'dist/pet-feeder-card-editor.js': 'card/pet-feeder-card-editor.js', 'dist/freshfeed-editor-model.js': 'card/freshfeed-editor-model.js', 'README.md': 'distribution/README-card.md', 'hacs.json': 'distribution/hacs-card.json', '.github/workflows/validate.yml': 'distribution/workflow-card.yml'}
 
 # App profile (plan Global Constraints): written only into the build output,

@@ -132,9 +132,6 @@ async def _to_confirm(ctx):
     hass = ctx.hass
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER})
-    assert result["type"] is FlowResultType.MENU
-    assert result["menu_options"] == ["account", "existing"]
-    result = await _configure(hass, result, {"next_step_id": "account"})
     assert result["type"] is FlowResultType.FORM and result["step_id"] == "account"
     ctx.now += 120.0
     return await _configure(hass, result, {"country": "1", "email": EMAIL, "password": PASSWORD})
@@ -306,7 +303,7 @@ async def test_owned_entry_contains_no_account_credentials(ctx, caplog):
     assert results[-1]["type"] is FlowResultType.CREATE_ENTRY, results[-1].get("errors")
     await hass.async_block_till_done()
     entry = results[-1]["result"]
-    assert set(entry.data) == OWNED_KEYS and dict(entry.options) == {}
+    assert set(entry.data) == OWNED_KEYS and dict(entry.options) == {"cloud_read_enabled": True}
     stored = repr(dict(entry.data)) + repr(dict(entry.options)) + entry.title + repr(entry.unique_id)
     for secret in (EMAIL, PASSWORD):
         assert secret not in stored and secret not in flow_state and secret not in caplog.text
@@ -384,7 +381,7 @@ async def test_ignored_owned_entry_does_not_block(ctx):
     assert [e.source for e in ctx.hass.config_entries.async_entries(DOMAIN)] == ["user"]
 
 
-async def test_legacy_pick_refuses_owned_duplicate(ctx):
+async def test_account_refuses_owned_duplicate_with_competing_source(ctx):
     hass = ctx.hass
     MockConfigEntry(domain=DOMAIN, unique_id=DEVICE,
                     data={CONF_CONNECTION_BACKEND: BACKEND_OWNED, CONF_DEVICE_ID: DEVICE,
@@ -394,9 +391,8 @@ async def test_legacy_pick_refuses_owned_duplicate(ctx):
     tl.add_to_hass(hass)
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER})
-    result = await _configure(hass, result, {"next_step_id": "existing"})
-    if result["type"] is FlowResultType.FORM:
-        result = await _configure(hass, result, {})
+    assert result["step_id"] == "account"
+    result = await _configure(hass, result, {"country": "1", "email": EMAIL, "password": PASSWORD})
     assert result["type"] is FlowResultType.ABORT and result["reason"] == "already_configured"
     assert len(hass.config_entries.async_entries(DOMAIN)) == 1
 
@@ -430,9 +426,30 @@ async def test_owned_controls_explicit_only(ctx):
     await until(lambda: entry.runtime_data.adapter is not None)
     assert entry.runtime_data.witness is not None
     result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] is FlowResultType.ABORT
+    assert result["type"] is FlowResultType.FORM
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"enable_controls": True})
     assert result["reason"] == "controls_already_enabled"
     assert ctx.device.control_frames() == [] and ctx.device.controls == []
+
+
+@pytest.mark.parametrize("enable", [False, True])
+async def test_owned_controls_preserves_existing_options(ctx, enable):
+    hass = ctx.hass
+    options = {"historical_option": "preserve", "nested": {"value": 7}}
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id=DEVICE,
+        data={CONF_CONNECTION_BACKEND: BACKEND_OWNED, CONF_DEVICE_ID: DEVICE,
+              CONF_HOST: HOST, CONF_LOCAL_KEY: "test-key", CONF_PROTOCOL_VERSION: "3.5"},
+        options=options,
+    )
+    entry.add_to_hass(hass)
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(TL_DOMAIN, DEVICE)})
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"enable_controls": enable})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert dict(entry.options) == options
 
 
 async def test_enable_owned_controls_preserves_connection_config(ctx):
@@ -585,7 +602,7 @@ async def test_reconfigure_refuses_unload_failure_and_legacy(ctx, source_entry):
     legacy.add_to_hass(hass)
     result = await _reconfigure(ctx, legacy)
     assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reconfigure_unsupported"
+    assert result["reason"] == "legacy_backend_removed"
 
 
 async def test_update_listener_respects_transition_gate(ctx):

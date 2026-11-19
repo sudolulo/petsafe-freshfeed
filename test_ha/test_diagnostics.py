@@ -25,12 +25,25 @@ async def test_allowlist_excludes_nested_sentinels(hass, caplog):
     assert set(result) == {'component_version', 'ha_version', 'backend', 'protocol_version',
                            'connected', 'admission_reason', 'schedule_source_state',
                            'schedule_count', 'write_state', 'recovery_phase',
-                           'storage_fault', 'integrity_fault'}
+                           'storage_fault', 'integrity_fault', 'cloud_mode', 'cloud_auth', 'cloud_outcome'}
     assert result['admission_reason'] == 'unknown'
     assert result['connected'] is True and result['schedule_count'] == 2
     for value in secrets.values():
         assert value not in json.dumps(result)
         assert value not in caplog.text
+
+
+async def test_cloud_diagnostics_fixed_labels_only(hass):
+    from custom_components.petsafe_freshfeed.diagnostics import async_get_config_entry_diagnostics
+    secrets = {key: 'synthetic-private-' + key for key in ('sid', 'ecode', 'local_key', 'password')}
+    entry = SimpleNamespace(data=secrets, options={'cloud_read_enabled': True},
+        runtime_data=SimpleNamespace(cloud_read=SimpleNamespace(
+            last_outcome=secrets['sid'], auth_state=secrets['ecode'], secrets=secrets)))
+    result = await async_get_config_entry_diagnostics(hass, entry)
+    assert result.get('cloud_mode') == 'enabled'
+    assert result['cloud_auth'] == 'unknown'
+    assert result['cloud_outcome'] == 'unknown'
+    assert 'synthetic-private-' not in json.dumps(result)
 
 
 async def test_diagnostics_setup_failure_no_runtime(hass):
@@ -42,7 +55,8 @@ async def test_diagnostics_setup_failure_no_runtime(hass):
                       'backend': 'owned', 'protocol_version': '3.5', 'connected': None,
                       'admission_reason': 'unknown', 'schedule_source_state': 'unknown',
                       'schedule_count': None, 'write_state': 'unknown',
-                      'recovery_phase': 'unknown', 'storage_fault': None, 'integrity_fault': None}
+                      'recovery_phase': 'unknown', 'storage_fault': None, 'integrity_fault': None,
+                      'cloud_mode': 'fully_local', 'cloud_auth': 'unknown', 'cloud_outcome': 'unknown'}
 
 
 async def test_diagnostics_never_io_or_mutates(hass):
@@ -65,7 +79,7 @@ async def test_diagnostics_never_io_or_mutates(hass):
     entry = SimpleNamespace(data={}, runtime_data=hub)
     result = await async_get_config_entry_diagnostics(hass, entry)
     assert result['admission_reason'] == 'controls_disabled'
-    assert result['backend'] == 'legacy'
+    assert result['backend'] == 'unknown'
     assert spy.call_count == 0
     assert retained == original
 

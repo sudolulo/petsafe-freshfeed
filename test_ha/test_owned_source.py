@@ -92,81 +92,7 @@ def pinned(monkeypatch, no_tuya_local):
         sys.modules.update(saved)
 
 
-class FakeSocket:
-    """One injected TCP connection to a FakeDevice; thread-safe."""
-
-    def __init__(self, device):
-        self.device = device
-        self.timeout = None
-        self.closed = False
-        self.peer_closed = False
-        self.buffer = bytearray()
-        self.cond = threading.Condition()
-        self.session_key = None
-        self.local_nonce = self.remote_nonce = None
-
-    def setsockopt(self, *args):
-        pass
-
-    def settimeout(self, value):
-        self.timeout = value
-
-    def gettimeout(self):
-        return self.timeout
-
-    def fileno(self):
-        return -1 if self.closed else 1000
-
-    def connect(self, address):
-        self.device.addresses.append(address)
-        if self.device.refuse:
-            raise ConnectionRefusedError("synthetic refusal")
-
-    def sendall(self, data):
-        with self.device.io():
-            if self.closed or self.peer_closed:
-                raise BrokenPipeError("synthetic closed")
-            self.device.from_client(self, bytes(data))
-
-    def recv(self, size):
-        with self.device.io():
-            gate = self.device.take_gate()
-            if gate is not None:
-                self.device.entered.set()
-                gate.wait(10)
-            error = self.device.recv_error
-            if error is not None:
-                self.device.recv_error = None
-                raise error
-            deadline = time.monotonic() + min(self.timeout or MAX_WAIT, MAX_WAIT)
-            with self.cond:
-                while not self.buffer:
-                    if self.closed:
-                        raise OSError("synthetic closed")
-                    if self.peer_closed:
-                        return b""
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise real_socket.timeout("timed out")
-                    self.cond.wait(remaining)
-                chunk = bytes(self.buffer[:size])
-                del self.buffer[:size]
-                return chunk
-
-    def push(self, data):
-        with self.cond:
-            self.buffer.extend(data)
-            self.cond.notify_all()
-
-    def drop(self):
-        with self.cond:
-            self.peer_closed = True
-            self.cond.notify_all()
-
-    def close(self):
-        with self.cond:
-            self.closed = True
-            self.cond.notify_all()
+from owned_test_support import FakeSocket, Owner
 
 
 class FakeDevice:
@@ -646,10 +572,24 @@ async def test_loaded_tinytuya_version_mismatch_refuses(hass, pinned, monkeypatc
 
 def test_fingerprints_are_tinytuya_rows_only():
     manifest = json.loads(Path(owned_compat.__file__).with_name("owned_fingerprints.json").read_text())
-    legacy = json.loads(Path(owned_compat.__file__).with_name("tuya_fingerprints.json").read_text())
     assert manifest["tinytuya_version"] == "1.20.0"
-    assert manifest["files"] == {key: value for key, value in legacy["files"].items()
-                                 if key.startswith("tinytuya/")}
+    # Frozen audited owned rows; no retired fingerprint file is needed.
+    assert manifest["files"] == {
+        "tinytuya/__init__.py": "f86d5d0908ba049b9cf1f0bcd61112dd110f2a97cfd8c94ca7cd21009deffb10",
+        "tinytuya/core/Device.py": "7198545e788da17bce360999ece54e98d09a27d614f431adf62a1fc99c37c211",
+        "tinytuya/core/Monitor.py": "6464d454da0dea0ad872c55162ebf74633550c4b4b25ae7388d2253cd37650f3",
+        "tinytuya/core/XenonDevice.py": "cd3a5f333eed39c55dafd821a01810ac824c74e6cbd330c9b863e43bf4b7963f",
+        "tinytuya/core/__init__.py": "276bbffdee36fb97a4eddd1dbddd20b706211d05035dadc22f2440cf10871181",
+        "tinytuya/core/command_types.py": "446c71f778c4aadcb751356968ffb744c2b47070309b86b5fda66a380dba5fad",
+        "tinytuya/core/const.py": "875eb71a086814625845b1518eae628fa751ad648985eb2b1cf36c38cc828e4e",
+        "tinytuya/core/core.py": "abf8daf68a36b34befa373a81bae20e7d7bcac6655cab20cba3e810c783572bc",
+        "tinytuya/core/crypto_helper.py": "4d5270756da06a55427e44bc838bca5a18ba382d969fa7eb7aecddb446c0903c",
+        "tinytuya/core/error_helper.py": "8b08f583a90b2addddfa5787fd7c44e245e28f7a6eb7bc4ffa9aea5a6b5917ab",
+        "tinytuya/core/exceptions.py": "60064de3b23d487abe109ced534bbc63b7f54f91aeab49cf1244911c78e22419",
+        "tinytuya/core/header.py": "4ebe817e777565eda70918d6ab9b791e41a9e73eda516ba5fea662ccd3310a47",
+        "tinytuya/core/message_helper.py": "158c14953482071f8e60250b36c208b5e381640a5e8629d1d076d91bcf737283",
+        "tinytuya/core/udp_helper.py": "b21942df11e2e0cc0da9fd5143922e01f313744fd741409471f3727f2927af29",
+    }
     text = Path(owned_compat.__file__).read_text()
     assert "tuya_fingerprints" not in text and "tuya_local" not in text
     # The synchronous logger gate covers every fingerprinted module, with no file I/O.
@@ -664,7 +604,7 @@ def test_runtime_gates_do_no_file_io(monkeypatch):
     monkeypatch.setattr(Path, "read_bytes", refuse)
     monkeypatch.setattr("builtins.open", refuse)
     assert owned_compat.vendor_logging_safe() is True
-    owner = SimpleNamespace(api=None, lock=None, is_current=lambda: True)
+    owner = Owner(api=None, lock=None)
     assert owned_compat.check_runtime_owner(owner, None, asyncio.Lock()) is False
 
 
@@ -840,9 +780,7 @@ def _drive(api):
     api._check_socket_close(True)
 
 
-async def test_socket_hook_parity_with_legacy(hass, monkeypatch, no_tuya_local):
-    from custom_components.petsafe_freshfeed import tuya_compat
-    from custom_components.petsafe_freshfeed.tuya_bridge import TuyaBridge
+async def test_owned_socket_hook_contract(hass, monkeypatch, no_tuya_local):
     monkeypatch.setattr(owned_source, "check_loaded_client", lambda api: True)
     owned_api = SynthClient()
     source = fast(OwnedSource(hass, connection(), client_factory=lambda conn: owned_api))
@@ -850,30 +788,25 @@ async def test_socket_hook_parity_with_legacy(hass, monkeypatch, no_tuya_local):
     source.subscribe(lambda r: owned_events.append(("report", r.epoch, r.dps, r.ack_eligible)),
                      lambda *args: owned_events.append(("connection", *args)))
     await source.async_start()
-    # Explicit owned-hook provenance, separate from the legacy registry.
     for name in owned_compat.OWNED_HOOKS:
         assert owned_compat.hook_original(owned_api, name) is not None
-        assert tuya_compat.owned_original(owned_api, name) is None
-    # Align the legacy side on the same post-admission state.
-    legacy_api = SynthClient()
-    legacy_api.status()
-    bridge = TuyaBridge(hass, SimpleNamespace(_api=legacy_api), legacy_api, asyncio.Lock())
-    bridge.epoch = source.epoch
-    bridge.install()
-    legacy_events = []
-    bridge.subscribe(lambda r: legacy_events.append(("report", r.epoch, r.dps, r.ack_eligible)),
-                     lambda *args: legacy_events.append(("connection", *args)))
+    epoch = source.epoch
     del owned_events[:]
-    async with source.lock:  # keep the owned monitor out of the comparison
+    async with source.lock:  # keep the owned monitor out of the sequence
         _drive(owned_api)
-        _drive(legacy_api)
         await hass.async_block_till_done()
         source.flush()
-        bridge.flush()
-    assert owned_events == legacy_events
-    assert ("connection", source.epoch, False) in owned_events
-    assert source.epoch == bridge.epoch
-    await bridge.async_detach()
+    assert owned_events == [
+        ('report', epoch, {'1': 'x', '110': True}, True),
+        ('connection', epoch + 1, False),
+        ('report', epoch + 1, {'4': 'a'}, True),
+        ('connection', epoch + 2, False), ('connection', epoch + 2, True),
+        ('connection', epoch + 3, False), ('connection', epoch + 3, True),
+        ('connection', epoch + 4, False),
+        ('connection', epoch + 5, False), ('connection', epoch + 5, True),
+        ('connection', epoch + 6, False),
+    ]
+    assert source.epoch == epoch + 6
     assert await source.async_stop() is True
     for name in owned_compat.OWNED_HOOKS:
         assert name not in vars(owned_api)

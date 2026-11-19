@@ -5,8 +5,7 @@ TinyTuya only: the loaded library is checked against ``owned_fingerprints.json``
 ``check_loaded_client`` reads files and must run in an executor;
 ``check_runtime_owner`` and ``vendor_logging_safe`` are synchronous and do no
 file I/O. Hooks the owned source installs on its client are registered here,
-in a registry separate from the legacy bridge's, so each admission sees only
-its own explicitly owned instance attributes.
+so each admission sees only its own explicitly owned instance attributes.
 """
 from __future__ import annotations
 
@@ -17,10 +16,11 @@ import json
 import logging
 from pathlib import Path
 import sys
+import struct
 import threading
+from types import CodeType
 
 from .critical_transport import _socket_open, underlying_socket
-from .tuya_compat import _source_code_matches
 
 FAILURE = "owned_source_incompatible"
 _MANIFEST = "owned_fingerprints.json"
@@ -46,6 +46,51 @@ VENDOR_MODULES = (
     "tinytuya.core.exceptions", "tinytuya.core.header", "tinytuya.core.message_helper",
     "tinytuya.core.udp_helper",
 )
+
+def _constant_signature(value):
+    """Represent compiler constants exactly, including signed IEEE zero."""
+    kind = type(value)
+    if kind is CodeType:
+        return ("code", _code_signature(value))
+    if kind is float:
+        return ("float", struct.pack('!d', value))
+    if kind is complex:
+        return ("complex", struct.pack('!dd', value.real, value.imag))
+    if kind is slice:
+        return ("slice", *(_constant_signature(item) for item in
+                           (value.start, value.stop, value.step)))
+    if kind is tuple:
+        return ("tuple", tuple(_constant_signature(item) for item in value))
+    if kind is frozenset:
+        return ("frozenset", frozenset(_constant_signature(item) for item in value))
+    if kind in (type(None), bool, int, str, bytes, type(Ellipsis)):
+        return (kind.__name__, value)
+    raise ValueError(FAILURE)
+
+
+def _code_signature(code):
+    """Compare executable semantics, including nested code, not locations or caches."""
+    constants = tuple(_constant_signature(value) for value in code.co_consts)
+    return (code.co_code, constants, code.co_names, code.co_varnames,
+            code.co_freevars, code.co_cellvars, code.co_argcount,
+            code.co_posonlyargcount, code.co_kwonlyargcount, code.co_nlocals,
+            code.co_stacksize, code.co_flags, code.co_exceptiontable)
+
+
+def _source_code_matches(function, owner, root):
+    """Locate a class method in compiled verified source; never execute it."""
+    current = root
+    for part in owner.__qualname__.split('.'):
+        candidates = [item for item in current.co_consts
+                      if isinstance(item, CodeType) and item.co_name == part]
+        if len(candidates) != 1:
+            return False
+        current = candidates[0]
+    candidates = [item for item in current.co_consts
+                  if isinstance(item, CodeType) and item.co_name == function.__name__]
+    return (len(candidates) == 1 and
+            _code_signature(function.__code__) == _code_signature(candidates[0]))
+
 
 _HOOKS = {}
 _HOOKS_GUARD = threading.Lock()

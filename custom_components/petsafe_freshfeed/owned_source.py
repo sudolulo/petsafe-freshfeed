@@ -427,20 +427,22 @@ class OwnedSource:
 
         def hook(*args, _name=name, _original=original, **kwargs):
             parts = ()
+            at = received = None
             with self._guard:
                 self._note_socket()
                 # Copy actual decoded results BEFORE the client cache merges.
                 if _name == "_cache_response" and args and isinstance(args[0], dict):
                     parts = split_frame(args[0].get("dps"), exchange=False)
+                    at = datetime.now(timezone.utc)
+                    received = monotonic()
             try:
                 return _original(*args, **kwargs)
             finally:
                 with self._guard:
                     self._note_socket()
                     if parts and self._hooks_active:
-                        at = datetime.now(timezone.utc)
                         for dps, eligible in parts:
-                            self._enqueue(("report", at, dps, eligible))
+                            self._enqueue(("report", at, dps, eligible, received))
 
         own_hook(api, name, hook, original)
         self._installed[name] = hook
@@ -505,7 +507,7 @@ class OwnedSource:
                 self.last_sequence += 1
                 self._cache.update(item[2])
                 self._deliver_report(DeviceReport(self.epoch, self.last_sequence, item[1],
-                                                  item[2], item[3]))
+                                                  item[2], item[3], item[4]))
 
     def _deliver_connection(self, epoch, connected):
         for _, callback in tuple(self._subscribers):
@@ -607,8 +609,9 @@ class OwnedSource:
                 return
             self._note_socket()
             at = datetime.now(timezone.utc)
+            received = monotonic()
             for actual, eligible in split_frame(dps, exchange=True):
-                self._enqueue(("report", at, actual, eligible))
+                self._enqueue(("report", at, actual, eligible, received))
 
     async def async_wait_idle(self, timeout: float = 5.0) -> bool:
         """True once no start/stop transition runs and deliveries are flushed."""

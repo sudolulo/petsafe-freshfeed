@@ -4,28 +4,32 @@ from types import SimpleNamespace
 import pytest
 from homeassistant.exceptions import ServiceValidationError
 
-from test_write_lifecycle import pinned, _provision, _setup, _ids, _current, _load
+from test_write_lifecycle import lifecycle, _provision, _setup, _ids, _current, _load
 from test_write_adapter import _queue_reports
-from test_tuya_bridge import _frame, until
+from owned_test_support import _frame, until
 
 
-async def test_feed_service_dispatches_once_and_waits_for_actual_status(pinned):
+async def test_feed_service_dispatches_once_and_waits_for_actual_status(lifecycle):
     from homeassistant.core import Context
     from unittest.mock import AsyncMock
 
-    ctx = pinned
+    ctx = lifecycle
     store_id = await _provision(ctx)
     entry = await _setup(ctx, _ids(store_id, ctx.leaf))
     hub = entry.runtime_data
     await _current(hub)
     ctx.hass.auth.async_get_user = AsyncMock(return_value=SimpleNamespace(is_admin=True))
-    ctx.api.response = _frame({'4': 'standby'})
+    ctx.device.on_control = lambda sock, payload: sock.push(
+        ctx.device.frame(13, b'3.5' + 12 * b'\x00' + b'{"dps":{"4":"standby"}}', sock.session_key))
     response = await ctx.hass.services.async_call(
         'petsafe_freshfeed', 'command',
         {'entry_id': entry.entry_id, 'operation': 'feed', 'confirmed': True},
         context=Context(user_id='acceptance-admin'), blocking=True, return_response=True)
     assert response['admitted']
-    assert ctx.writes == [b'synthetic-control']
+    assert len(ctx.writes) == 1
+    timestamp = ctx.writes[0]['t']
+    assert type(timestamp) is int
+    assert ctx.writes == [{'protocol': 5, 't': timestamp, 'data': {'dps': {'140': 'EA=='}}}]
     assert (await _load(ctx, store_id))['operation'] == 'feed'
     assert hub.write_view['state'] == 'uncertain'
     _queue_reports(SimpleNamespace(bridge=hub.bridge), {'140': 'EAEA'})
@@ -33,8 +37,9 @@ async def test_feed_service_dispatches_once_and_waits_for_actual_status(pinned):
     assert len(ctx.writes) == 1
 
 
-async def test_schedule_verified_restart_recovery_and_restart_again(pinned):
-    ctx = pinned
+async def test_schedule_verified_restart_recovery_and_restart_again(lifecycle):
+    ctx = lifecycle
+    ctx.device.dps.pop('1', None)
     store_id = await _provision(ctx)
     entry = await _setup(ctx, _ids(store_id, ctx.leaf))
     hub = entry.runtime_data
@@ -61,13 +66,17 @@ async def test_schedule_verified_restart_recovery_and_restart_again(pinned):
     assert not ctx.writes
     # The HA service routes to the adapter; the matching post-dispatch DP1 echo verifies it.
     hub.schedule = hub.schedule.disconnected()
-    ctx.api.response = _frame({'1': '/w=='})
+    ctx.device.on_control = lambda sock, payload: sock.push(
+        ctx.device.frame(13, b'3.5' + 12 * b'\x00' + b'{"dps":{"1":"/w=="}}', sock.session_key))
     response = await service('save_schedule', {
         'entry_id': entry.entry_id, 'base_revision': hub.schedule.revision,
         'entries': [{'weekmask': 1, 'hour': 0, 'minute': 0, 'enabled': True, 'audible': False}],
     })
     assert response['admitted']
-    assert ctx.writes == [b'synthetic-control']
+    assert len(ctx.writes) == 1
+    timestamp = ctx.writes[0]['t']
+    assert type(timestamp) is int
+    assert ctx.writes == [{'protocol': 5, 't': timestamp, 'data': {'dps': {'1': 'AQAAAQA='}}}]
     _queue_reports(SimpleNamespace(bridge=hub.bridge), {'1': 'AQAAAQA='})
     await until(lambda: hub.write_view['state'] == 'verified')
     assert len(ctx.writes) == 1

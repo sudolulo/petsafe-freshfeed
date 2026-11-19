@@ -94,6 +94,7 @@ _CLOSED_OPERATIONS = {
     "PASSWORD_LOGIN": ("thing.m.user.email.password.login", "3.0"),
     "HOMES": ("m.life.home.space.list", "1.0"),
     "DEVICES": ("m.life.my.group.device.list", "2.2"),
+    "DP_GET": ("s.m.dev.dp.get", "1.0"),
 }
 _CLOSED_REGIONS = {
     "AZ": "https://a1-us.iotbing.com/api.json",
@@ -146,7 +147,7 @@ _DIRECTED_API_HOSTS = (
 _A1_LABEL = re.compile(r"\Aa1(?:[a-z0-9-]{0,60}[a-z0-9])?\Z")
 MAX_DIRECTED_CHARS = 256
 _SESSION_RULES = {"forbidden", "required"}
-_VALUE_KINDS = {"country_code", "email", "rsa_hex", "login_token", "group_id"}
+_VALUE_KINDS = {"country_code", "email", "rsa_hex", "login_token", "group_id", "device_id"}
 # Closed per-operation session rule and ordered business schema. Compared
 # type-exactly (JSON text), so e.g. a literal false cannot become 0.
 _CLOSED_SESSIONS = {
@@ -154,6 +155,7 @@ _CLOSED_SESSIONS = {
     "PASSWORD_LOGIN": "forbidden",
     "HOMES": "required",
     "DEVICES": "required",
+    "DP_GET": "required",
 }
 _CLOSED_BUSINESS = {
     "TOKEN": [
@@ -171,6 +173,7 @@ _CLOSED_BUSINESS = {
     ],
     "HOMES": [],
     "DEVICES": [["gid", "group_id"]],
+    "DP_GET": [["gwId", "device_id"], ["devId", "device_id"]],
 }
 _CLOSED_ENVELOPE = {
     "order": [
@@ -248,6 +251,7 @@ class Operation(enum.Enum):
     PASSWORD_LOGIN = "PASSWORD_LOGIN"
     HOMES = "HOMES"
     DEVICES = "DEVICES"
+    DP_GET = "DP_GET"
 
 
 # --------------------------------------------------------------------------
@@ -475,7 +479,7 @@ class Route:
 # matches its snapshot.
 _DIRECTED_ROUTES = {}
 _DIRECTED_LOCK = threading.Lock()
-_DIRECTED_OPERATIONS = ("HOMES", "DEVICES")
+_DIRECTED_OPERATIONS = ("HOMES", "DEVICES", "DP_GET")
 
 
 def _route_fields(route):
@@ -795,9 +799,14 @@ def _check_business(operation, business, route, contract):
                 raise _reject()
         elif kind == "group_id":
             _check_group_id(value)
+        elif kind == "device_id":
+            if type(value) is not str or not GID_STR.fullmatch(value):
+                raise _reject()
         else:
             raise _reject()
         ordered[key] = value
+    if operation is Operation.DP_GET and ordered["gwId"] != ordered["devId"]:
+        raise _reject()
     return ordered
 
 

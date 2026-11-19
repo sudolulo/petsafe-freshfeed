@@ -1,10 +1,8 @@
 """Single-attempt transport using an already authenticated client.
 
-Two admissions share one core: ``async_create`` (legacy, a borrowed Tuya Local
-wrapper's ``_api``/``_api_lock``; the check receives that wrapper) and
-``async_create_owned`` (a PetSafe-owned ``ClientOwner`` with public ``api``,
+``async_create_owned`` admits a PetSafe-owned ``ClientOwner`` with public ``api``,
 ``lock`` and ``is_current()``; the check receives the real owner, and a
-replaced api/lock or a non-current owner refuses every later send).
+replaced api/lock or a non-current owner refuses every later send.
 
 This module authorizes no datapoint semantics. A future adapter must prove the
 actual loaded client, its authenticated connection and its shared lock. Nothing
@@ -314,26 +312,6 @@ def underlying_socket(sock):
     return sock
 
 
-class _LegacyBinding:
-    """Explicit adapter: a Tuya Local wrapper's private client aliases."""
-
-    __slots__ = ("target",)
-
-    def __init__(self, wrapper):
-        self.target = wrapper
-
-    @property
-    def api(self):
-        return getattr(self.target, "_api", None)
-
-    @property
-    def lock(self):
-        return getattr(self.target, "_api_lock", None)
-
-    def current(self):
-        return True
-
-
 class _OwnedBinding:
     """A PetSafe-owned client owner: public ``api``/``lock``/``is_current``."""
 
@@ -356,19 +334,6 @@ class _OwnedBinding:
 
 class CriticalTransport:
     """Fail-closed admission, durable uncertainty, and actual-thread ownership."""
-
-    @classmethod
-    async def async_create(cls, wrapper, witness: IntentWitness, *,
-                           compatibility_check: Callable[[object, object, asyncio.Lock], bool],
-                           socket_deadline: float = 3.0,
-                           max_receive_bytes: int = 65536,
-                           dispatch_callback: Callable[[str], object] | None = None,
-                           report_callback: Callable[[dict], None] | None = None):
-        """Legacy borrowed Tuya Local client; the check receives the wrapper."""
-        return await cls._async_create(
-            _LegacyBinding(wrapper), witness, compatibility_check=compatibility_check,
-            socket_deadline=socket_deadline, max_receive_bytes=max_receive_bytes,
-            dispatch_callback=dispatch_callback, report_callback=report_callback)
 
     @classmethod
     async def async_create_owned(cls, owner, witness: IntentWitness, *,
@@ -801,7 +766,7 @@ class CriticalTransport:
         self._busy = True
         try:
             # Operation-specific fresh recovery check, not cached status or a
-            # historical physical-success guess. May use the borrowed API lock.
+            # historical physical-success guess.
             result = await verifier()
             _raise_if_cancelling()
             if result is not True:

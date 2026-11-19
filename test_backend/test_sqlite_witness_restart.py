@@ -310,7 +310,7 @@ class RestartTests(unittest.IsolatedAsyncioTestCase):
         self.log_level = log.level
         log.setLevel(logging.INFO)
         self.api = SyntheticAPI()
-        self.wrapper = SimpleNamespace(_api=self.api, _api_lock=asyncio.Lock())
+        self.wrapper = SimpleNamespace(api=self.api, lock=asyncio.Lock(), is_current=lambda: True)
 
     async def create_store(self, label):
         parent = self.root / label
@@ -321,7 +321,7 @@ class RestartTests(unittest.IsolatedAsyncioTestCase):
         return path, witness
 
     async def engine(self, witness):
-        engine = await CriticalTransport.async_create(
+        engine = await CriticalTransport.async_create_owned(
             self.wrapper, witness, compatibility_check=lambda *args: True)
         self.engines.append(engine)
         return engine
@@ -408,7 +408,7 @@ class RestartTests(unittest.IsolatedAsyncioTestCase):
         checks = []
         async def verify():
             checks.append("fresh")
-            async with self.wrapper._api_lock:
+            async with self.wrapper.lock:
                 return True
         for opid, confirmed, session in ((OLD["operation_id"], True, old_nonce),
                 (OLD["operation_id"], False, second.recovery_session_id),

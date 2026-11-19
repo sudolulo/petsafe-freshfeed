@@ -1,16 +1,16 @@
-"""Neutral local-source contract shared by the legacy bridge and owned sources.
+"""Neutral local-source contract for the owned source.
 
 No Home Assistant or Tuya Local import. A source owns exactly one
 authenticated client per physical feeder and delivers decoded observations,
 numbered on the owning event loop, to its subscribers. Report types, the
-drain-through-cancel helper and the DP sets live here; ``tuya_bridge``
-re-exports them for compatibility.
+drain-through-cancel helper and the DP sets live here.
 """
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from time import monotonic
 from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
 
 from .observed import RAW_DPS
@@ -32,8 +32,9 @@ class DeviceReport:
     epoch: int
     sequence: int
     at: datetime
-    dps: dict[str, bool | int | str]
+    dps: dict[str, bool | int | str | None]
     ack_eligible: bool = True
+    received_monotonic: float = field(default_factory=monotonic)
 
 
 @dataclass(frozen=True)
@@ -69,22 +70,28 @@ async def _settle(future):
     return future.result()
 
 
-def split_frame(dps, *, exchange: bool) -> list[tuple[dict[str, bool | int | str], bool]]:
+def split_frame(dps, *, exchange: bool) -> list[tuple[dict[str, bool | int | str | None], bool]]:
     """Split one decoded frame into (ACK_DPS part, observation-only remainder).
 
-    Only observed string DPS with scalar values survive. Each DP is delivered
-    exactly once. The ACK part is acknowledgement-eligible only for ordinary
-    monitor frames; exchange frames are always ineligible. Empty parts are
-    omitted.
+    Observed malformed values become None in the ineligible remainder, so they
+    invalidate prior observations without ever acknowledging a write. Each DP
+    is delivered exactly once. Exchange frames are always ineligible.
     """
     if not isinstance(dps, dict):
         return []
     ack, rest = {}, {}
     for key, value in dps.items():
-        if type(key) is not str or key not in OBSERVED_DPS or type(value) not in (bool, int, str):
+        if type(key) is not str or key not in OBSERVED_DPS:
             continue
-        (ack if key in ACK_DPS else rest)[key] = value
+        if type(value) not in (bool, int, str):
+            rest[key] = None
+        else:
+            (ack if key in ACK_DPS else rest)[key] = value
     parts = []
+    # Invalidate stale observations before any eligible part of the same frame.
+    if rest and any(value is None for value in rest.values()):
+        parts.append((rest, False))
+        rest = {}
     if ack:
         parts.append((ack, not exchange))
     if rest:

@@ -1,6 +1,6 @@
 save_schedule:
   name: Save schedule
-  description: Requires an authenticated administrator. Save the complete vector against the last pushed revision. Device echo verifies observation, not physical execution.
+  description: Requires an authenticated administrator. Save the complete schedule using its last known revision. A device report does not prove physical execution.
   fields:
     entry_id:
       required: true
@@ -33,7 +33,7 @@ command:
         boolean:
 recover:
   name: Check and clear uncertainty
-  description: Requires an authenticated administrator. Acknowledge that you checked the feeder, then collect fresh reports for up to 35 seconds. Clears local uncertainty without repeating a command or certifying physical execution. Every new coordinator re-arms the durable witness.
+  description: Requires an authenticated administrator. Confirm you checked the feeder, then collect fresh reports for up to 35 seconds. Clearing local uncertainty does not repeat a command or prove it completed; uncertainty may return after restart.
   fields:
     entry_id:
       required: true

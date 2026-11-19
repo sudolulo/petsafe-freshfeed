@@ -1,4 +1,4 @@
-"""Lifecycle tests for FreshFeed's shared tuya_local client and durable adapter."""
+"""Lifecycle tests for FreshFeed's owned client and durable adapter."""
 from __future__ import annotations
 
 import asyncio
@@ -11,6 +11,8 @@ from homeassistant.config_entries import ConfigEntryState
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.petsafe_freshfeed.const import DOMAIN
+from test_owned_source import pinned, no_tuya_local  # noqa: F401
+from test_owned_hub import owned, owned_data, make_entry, leaf_for  # noqa: F401
 
 
 async def until(predicate, *, timeout=5):
@@ -35,10 +37,8 @@ async def _provision(ctx, *, retained=None, operation='feed'):
 
 
 async def _setup(ctx, extra=None, *, expect=True):
-    entry = MockConfigEntry(domain=DOMAIN, unique_id=ctx.source.entry_id,
-                            data={"source_entry_id": ctx.source.entry_id, **(extra or {})})
-    entry.add_to_hass(ctx.hass)
-    ctx.entries.append(entry)
+    entry = ctx.entry
+    ctx.hass.config_entries.async_update_entry(entry, data={**entry.data, **(extra or {})})
     assert await ctx.hass.config_entries.async_setup(entry.entry_id) is expect
     return entry
 
@@ -59,38 +59,19 @@ async def _current(hub):
 
 
 @pytest.fixture
-async def pinned(hass, source_entry, raw_entities, monkeypatch, tmp_path):
-    """Use the shared pinned TinyTuya fixture plus owned test storage."""
-    from test_tuya_bridge import create_owned, async_def_cleanup
-    owned = await create_owned(hass, source_entry, monkeypatch, attach=False)
-    # Product code provisions and opens under hass.config.path(INTENT_STORE_ROOT).
-    # Give this fixture an isolated HA config directory so both operations use
-    # the same private root without touching pytest's shared testing_config.
-    hass.config.config_dir = str(tmp_path)
-    monkeypatch.setattr(
-        "custom_components.petsafe_freshfeed.tuya_bridge.check_loaded_source",
-        lambda *args: True,
-    )
-    owned.source=source_entry
-    owned.leaf=owned.registry_device.id
-    owned.root=hass.config.path(".storage")
-    Path(owned.root).mkdir(mode=0o700)
-    owned.entries=[]
-    owned.writes=[]
-    from test_tuya_bridge import FakeSocket
-    def sendall(sock, data):
-        owned.writes.append(bytes(data))
-    monkeypatch.setattr(FakeSocket, "sendall", sendall)
-    yield owned
-    for entry in reversed(owned.entries):
-        if entry.state is ConfigEntryState.LOADED:
-            assert await hass.config_entries.async_unload(entry.entry_id)
-    await async_def_cleanup(owned)
+async def lifecycle(owned):
+    """Real owned source/transport over the encrypted protocol-3.5 fake."""
+    owned.entry = make_entry(owned, owned_data())
+    owned.leaf = leaf_for(owned, owned.entry).id
+    owned.hass.config_entries.async_update_entry(
+        owned.entry, data={**owned.entry.data, "registry_device_id": owned.leaf})
+    owned.writes = owned.device.controls
+    return owned
 
 
-async def test_coordinator_retries_transient_adapter_compatibility_failure(pinned, monkeypatch):
-    from custom_components.petsafe_freshfeed import hub as hub_module, tuya_bridge
-    ctx=pinned; monkeypatch.setattr(tuya_bridge, 'check_loaded_source', lambda *args: True)
+async def test_coordinator_retries_transient_adapter_compatibility_failure(lifecycle, monkeypatch):
+    from custom_components.petsafe_freshfeed import hub as hub_module
+    ctx=lifecycle
     real_create=hub_module.async_create_adapter; calls=0
     async def fail_once(*args,**kwargs):
         nonlocal calls
@@ -108,8 +89,8 @@ async def test_coordinator_retries_transient_adapter_compatibility_failure(pinne
     assert await ctx.hass.config_entries.async_unload(entry.entry_id)
 
 
-async def test_read_only_startup_never_provisions(pinned):
-    ctx = pinned
+async def test_read_only_startup_never_provisions(lifecycle):
+    ctx = lifecycle
     entry = await _setup(ctx)
     await until(lambda: entry.runtime_data.bridge is not None)
     hub = entry.runtime_data
@@ -119,8 +100,8 @@ async def test_read_only_startup_never_provisions(pinned):
 
 
 @pytest.mark.parametrize("corrupt", [False, True])
-async def test_missing_or_corrupt_store_is_not_repaired(pinned, corrupt):
-    ctx = pinned
+async def test_missing_or_corrupt_store_is_not_repaired(lifecycle, corrupt):
+    ctx = lifecycle
     store_id = uuid4().hex
     path = Path(ctx.root) / "petsafe_freshfeed" / ctx.leaf / "intent.sqlite"
     if corrupt:
@@ -139,8 +120,8 @@ async def test_missing_or_corrupt_store_is_not_repaired(pinned, corrupt):
 
 
 @pytest.mark.parametrize('operation', ['feed', 'cancel'])
-async def test_reloaded_coordinator_rearms_retained_intent_without_replay(pinned, operation):
-    ctx = pinned
+async def test_reloaded_coordinator_rearms_retained_intent_without_replay(lifecycle, operation):
+    ctx = lifecycle
     operation_id = uuid4().hex
     store_id = await _provision(ctx, retained=operation_id, operation=operation)
     entry = await _setup(ctx, _ids(store_id, ctx.leaf))
@@ -171,48 +152,47 @@ async def test_reloaded_coordinator_rearms_retained_intent_without_replay(pinned
     assert not ctx.writes
 
 
-async def test_source_retirement_fences_old_coordinator(pinned):
-    ctx = pinned
+async def test_source_retirement_fences_old_coordinator(lifecycle):
+    ctx = lifecycle
     store_id = await _provision(ctx)
     entry = await _setup(ctx, _ids(store_id, ctx.leaf))
     hub = entry.runtime_data
     await _current(hub)
     old, bridge = hub.adapter, hub.bridge
     assert await hub._source_unloaded()
-    assert old._stopped and not bridge._active
+    assert old._stopped and bridge._state == "stopped"
     assert hub.adapter is None and hub.bridge is None
-    await hub._async_attach_bridge()
+    await hub._async_attach_owned()
     await _current(hub)
     assert hub.adapter is not old and hub.bridge is not bridge
     assert not ctx.writes
 
 
-async def test_api_replacement_retires_old_coordinator(pinned):
-    from test_tuya_bridge import IoApi
-    ctx = pinned
+async def test_api_replacement_retires_old_coordinator(lifecycle):
+    ctx = lifecycle
     store_id = await _provision(ctx)
     entry = await _setup(ctx, _ids(store_id, ctx.leaf))
     hub = entry.runtime_data
     await _current(hub)
     old, bridge = hub.adapter, hub.bridge
-    replacement = IoApi()
-    ctx.wrapper._api = replacement
-    ctx.hass.data['tuya_local']['fakeid']['tuyadevice'] = replacement
-    hub._check_bridge(None)
-    await until(lambda: old._stopped and not bridge._active)
-    await until(lambda: hub.adapter is not None and hub.adapter is not old)
-    assert hub.bridge.api is replacement
+    # Retirement replaces the owned API, rather than borrowing a foreign one.
+    original_api = bridge.api
+    assert await hub._source_unloaded()
+    await hub._async_attach_owned()
+    await _current(hub)
+    assert old._stopped and bridge._state == "stopped"
+    assert hub.adapter is not old
+    assert hub.bridge.api is not original_api
     assert not ctx.writes
 
 
-async def test_failed_setup_fences_constructed_coordinator(pinned, monkeypatch):
+async def test_failed_setup_fences_constructed_coordinator(lifecycle, monkeypatch):
     from custom_components.petsafe_freshfeed import async_setup_entry
-    ctx = pinned
+    ctx = lifecycle
     store_id = await _provision(ctx)
-    entry = MockConfigEntry(domain=DOMAIN, unique_id=ctx.source.entry_id,
-                            data={'source_entry_id': ctx.source.entry_id, **_ids(store_id, ctx.leaf)})
-    entry.add_to_hass(ctx.hass)
-    ctx.entries.append(entry)
+    entry = ctx.entry
+    ctx.hass.config_entries.async_update_entry(
+        entry, data={**entry.data, **_ids(store_id, ctx.leaf)})
     captured = []
     async def fail_forward(entry, platforms):
         await _current(entry.runtime_data)
@@ -222,14 +202,14 @@ async def test_failed_setup_fences_constructed_coordinator(pinned, monkeypatch):
     with pytest.raises(RuntimeError, match='synthetic setup failure'):
         await async_setup_entry(ctx.hass, entry)
     adapter, bridge = captured[0]
-    assert adapter._stopped and not bridge._active
+    assert adapter._stopped and bridge._state == "stopped"
     assert not entry.runtime_data._parked
     assert not ctx.writes
 
 
-async def test_unload_waits_for_construction_and_retains_on_timeout(pinned, monkeypatch):
+async def test_unload_waits_for_construction_and_retains_on_timeout(lifecycle, monkeypatch):
     from custom_components.petsafe_freshfeed import hub as hub_module
-    ctx = pinned
+    ctx = lifecycle
     real = hub_module.async_create_adapter
     entered, release = asyncio.Event(), asyncio.Event()
     async def gated(*args, **kwargs):
@@ -245,10 +225,10 @@ async def test_unload_waits_for_construction_and_retains_on_timeout(pinned, monk
     bridge = hub.bridge
     try:
         assert not await hub.async_drain_controls()
-        assert hub.adapter is None and hub._parked and bridge._active
+        assert hub.adapter is None and hub._parked and bridge._state == "running"
         assert hub._parked[0][4] is not None
     finally:
         release.set()
     assert await hub.async_stop()
-    assert not hub._parked and not bridge._active
+    assert not hub._parked and bridge._state == "stopped"
     assert not ctx.writes

@@ -2,12 +2,9 @@
 
 DOMAIN = "petsafe_freshfeed"
 SOURCE_DOMAIN = "tuya_local"
-SOURCE_PROFILE = "petsafe_freshfeed_raw"
 CONF_SOURCE_ENTRY_ID = "source_entry_id"
-# Explicit persisted connection backend. A missing field means legacy (the
-# borrowed Tuya Local source); an unmigrated entry never switches silently.
+# Explicit persisted connection backend; missing/unsupported values are refused.
 CONF_CONNECTION_BACKEND = "connection_backend"
-BACKEND_LEGACY = "legacy"
 BACKEND_OWNED = "owned"
 # Owned local connection fields (the key is never logged or displayed).
 CONF_DEVICE_ID = "device_id"
@@ -16,9 +13,8 @@ CONF_HOST = "host"
 CONF_PROTOCOL_VERSION = "protocol_version"
 # Existing registry leaf of a migrated entry; new owned entries create theirs.
 CONF_REGISTRY_DEVICE_ID = "registry_device_id"
-# Migration provenance (former source entry) and the staged, not yet active, connection.
+# Inert historical identity marker: a missing persisted leaf must be refused.
 CONF_MIGRATED_FROM = "migrated_from"
-CONF_MIGRATION_STAGED_CONNECTION = "migration_staged_connection"
 # Retained-intent store identity, persisted only after explicit provisioning
 # succeeded. Absent means read-only; nothing ever creates or clears them on startup.
 CONF_INTENT_STORE_ID = "intent_store_id"
@@ -36,10 +32,8 @@ LIFECYCLE_TIMEOUT = 5.0
 # Bound on waiting for the owned connection to be current before enabling controls.
 COORDINATOR_READY_TIMEOUT = 10.0
 PLATFORMS = ("sensor", "binary_sensor", "event", "switch", "number")
-# Owned-backend-only entities replacing retiring Tuya Local profile entities:
-# role (entity key) -> (entity domain, DP, Tuya Local unique-ID suffix). A
-# migration journals which retiring rows held these roles so the owned
-# entities keep those entity IDs; legacy entries never create them.
+# role -> (entity domain, DP, historical unused unique-ID suffix).
+# Preserve tuple shape; owned entities use <entry_id>_<role> identities.
 OWNED_SETTING_ENTITIES = {
     "stainless_inserts": ("switch", "110", "-switch_stainless_inserts"),
     "meal_counter": ("switch", "125", "-switch_meal_counter"),

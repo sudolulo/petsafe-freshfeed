@@ -25,9 +25,11 @@ matching report never acknowledges, and the intent stays uncertain until
 explicit recovery.
 
 Recovery is an explicit, confirmed request for the current operation/session.
-It collects only actual incoming reports numbered after the request on the
-same uninterrupted epoch, for at most ``RECOVERY_TIMEOUT`` seconds. No DP query,
-write or cached evidence is ever used. Final validation runs synchronously in
+It requires actual incoming reports numbered after the request on the
+same uninterrupted epoch, for at most ``RECOVERY_TIMEOUT`` seconds. A frozen
+same-epoch actual safety baseline can support strict recovery; abandonment
+requires fresh DP4/142/145. The owned monitor's existing read-only status and
+heartbeat traffic continues; recovery never sends a command. Final validation runs synchronously in
 the verifier handed to ``CriticalTransport.async_reconcile``, with no await
 between it and the local release. A release clears THIS construction's barrier
 only; it is not evidence of physical execution.
@@ -47,7 +49,7 @@ does not change the recovery phase.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import logging
 import math
 from time import monotonic
@@ -58,9 +60,10 @@ from .const import (
     SETTINGS_ACK_TIMEOUT, WRITE_OPERATION_DPS, WRITE_SEND_TIMEOUT,
 )
 from .critical_transport import SendReceipt, _socket_open
-from .quick_feed import decode_quick_feed
+from .quick_feed import QuickFeed, decode_quick_feed
 from .schedule_codec import ScheduleCodecError, decode_base64
-from .services import operation_reason, setting_request, unsafe_reason
+from .services import (source_operation_decision, setting_request, unsafe_reason, recovery_allowed,
+                       local_abandonment_allowed, recovery_report_invalid, RECOVERY_SAFETY_KEYS)
 from .local_source import DeviceReport, DispatchMark, _settle
 
 _LOGGER = logging.getLogger(__name__)
@@ -89,6 +92,8 @@ class RecoveryEvidence:
     start_sequence: int
     end_sequence: int
     reports: tuple[DeviceReport, ...]
+    baseline_epoch: int | None = None
+    baseline_dps: dict = field(default_factory=dict)
 
 
 AckPredicate = Callable[[IntentContext, DispatchMark, DeviceReport], AckDecision]
@@ -117,7 +122,7 @@ def _uncancel():
 class _Collector:
     """Post-request evidence for one recovery request; never reused."""
 
-    def __init__(self, context, start_sequence, predicate):
+    def __init__(self, context, start_sequence, predicate, baseline_epoch=None, baseline_dps=None):
         self.context = context
         self.start_sequence = start_sequence
         self.reports = []
@@ -126,15 +131,28 @@ class _Collector:
         self.done = asyncio.Event()
         self.timer = None
         self._predicate = predicate
+        self.baseline_epoch = baseline_epoch
+        self.baseline_dps = dict(baseline_dps or {})
+        self.outcome = None
 
     def evidence(self):
         reports = tuple(self.reports)
         end = reports[-1].sequence if reports else self.start_sequence
-        return RecoveryEvidence(self.context, self.start_sequence, end, reports)
+        return RecoveryEvidence(self.context, self.start_sequence, end, reports,
+                                self.baseline_epoch, dict(self.baseline_dps))
 
     def approves(self):
         try:
-            return self._predicate(self.context, self.evidence()) is True
+            evidence = self.evidence()
+            if self._predicate(self.context, evidence) is True:
+                self.outcome = 'observed_safe'
+                return True
+            if (self._predicate is recovery_allowed
+                    and local_abandonment_allowed(self.context, evidence)):
+                self.outcome = 'abandoned'
+                return True
+            self.outcome = None
+            return False
         except Exception:  # noqa: BLE001 - a failing predicate approves nothing
             return False
 
@@ -155,6 +173,10 @@ class _Collector:
             self.invalidate("connection_interrupted")
             return
         if report.sequence <= self.start_sequence:
+            return
+        if (recovery_report_invalid(report.dps)
+                or self.reports and report.sequence <= self.reports[-1].sequence):
+            self.invalidate('recovery_rejected')
             return
         if len(self.reports) >= _MAX_EVIDENCE:
             self.invalidate("evidence_overflow")
@@ -187,6 +209,8 @@ class WriteAdapter:
         self._result = None
         self._reason = None
         self._phase = "idle"
+        self._recovery_resolution = None
+        self._resolution_epoch = None
         self._collector = None
         self._tasks = set()
         self._listeners = []
@@ -194,6 +218,14 @@ class WriteAdapter:
         self._live_dps = {}
         self._live_epoch = bridge.epoch
         self._live_sequence = -1
+        self._live_times = {}
+        self._live_sequences = {}
+        self._cloud_veto = False
+        self._cloud_unsubscribe = None
+        cloud = getattr(getattr(entry, 'runtime_data', None), 'cloud_read', None)
+        if cloud is not None:
+            self._cloud_unsubscribe = cloud.subscribe(self._cloud_updated)
+            self._cloud_veto = cloud.dp140_veto(bridge.epoch)
         # Settings acknowledgement window (monotonic deadline per dispatched
         # operation, from the send boundary) and the in-flight waiter.
         self._ack_deadlines = {}
@@ -238,6 +270,73 @@ class WriteAdapter:
             return self._phase
         return "awaiting_user_confirmation"
 
+    def _cloud(self):
+        return getattr(getattr(self.entry, 'runtime_data', None), 'cloud_read', None)
+
+    def _cloud_evidence(self):
+        cloud = self._cloud()
+        if cloud is None or self._live_epoch != self.bridge.epoch:
+            return None
+        evidence = cloud.evidence('140', sequences=self._live_sequences)
+        return evidence if evidence is not None and evidence.epoch == self.bridge.epoch else None
+
+    def _cloud_updated(self, epoch):
+        if epoch != self.bridge.epoch:
+            return
+        evidence = self._cloud_evidence()
+        status = (evidence.value.status if evidence is not None and type(evidence.value) is QuickFeed
+                  else decode_quick_feed(evidence.value).status if evidence is not None else None)
+        if evidence is not None and status not in ('idle', 'ready', 'failed'):
+            self._cloud_veto = True
+            if self._collector is not None:
+                self._collector.invalidate('recovery_rejected')
+        self._notify()
+
+    def clear_cloud_evidence(self):
+        """Forget volatile cloud veto without undoing a recovery rejection."""
+        self._cloud_veto = False
+        self._notify()
+
+    def _seed_reported(self, source):
+        """Count a DP140 already reported this epoch before construction.
+
+        It selects the strict local predicate (never the missing-DP140
+        exception); no receipt time is
+        seeded, so it can never supply fresh 4/142/145 evidence.
+        """
+        if not callable(source):
+            return
+        try:
+            seed = source(self.bridge.epoch)
+        except Exception:  # noqa: BLE001 - an unavailable seed adds nothing
+            return
+        item = seed.get('140') if type(seed) is dict else None
+        if (type(item) is not tuple or len(item) != 2 or type(item[1]) is not int
+                or self._live_epoch != self.bridge.epoch or '140' in self._live_sequences):
+            return
+        value, sequence = item
+        self._live_dps['140'] = value
+        self._live_sequences['140'] = sequence
+
+    def _decision(self, operation):
+        if operation != 'schedule' and '140' in self._live_sequences and '140' not in self._live_dps:
+            return 'status_unavailable', None
+        evidence = self._cloud_evidence()
+        return source_operation_decision(operation, self._live_dps, self._live_times, monotonic(),
+            evidence.value if evidence else None,
+            monotonic() - evidence.received_at if evidence else None,
+            self._cloud_veto and '140' not in self._live_sequences)
+
+    async def _demand_cloud(self, *, schedule=False):
+        cloud = self._cloud()
+        if cloud is not None and ('140' not in self._live_sequences
+                                  or (schedule and '1' not in self._live_sequences)):
+            await cloud.demand(epoch=self.bridge.epoch, sequences=dict(self._live_sequences),
+                allowed=(not self._stopped and self._submitting is None and self._ack_wait is None
+                         and self._collector is None and not any(self._faults())
+                         and getattr(self.transport, '_busy', True) is False
+                         and self._compatible_now()))
+
     def _can_start(self, phase):
         storage, integrity = self._faults()
         transport = self.transport
@@ -250,6 +349,7 @@ class WriteAdapter:
                 and self._pending_operation() is not None
                 and getattr(transport, "_busy", True) is False
                 and not unsafe_reason(self._live_dps)
+                and not (self._cloud_veto and '140' not in self._live_sequences)
                 and self._compatible_now())
 
     @property
@@ -279,6 +379,10 @@ class WriteAdapter:
             operation_id, operation = self._current.operation_id, self._current.operation
         else:
             state = "idle"
+        if (self._recovery_resolution is not None and
+                (not self._source_ok() or self.bridge.epoch != self._resolution_epoch
+                 or transport.recovery_session_id != self._recovery_resolution['session_id'])):
+            self._recovery_resolution = None
         phase = self._phase_view()
         can_start = self._can_start(phase)
         if (state == "uncertain" and phase in ("awaiting_user_confirmation", "failed")
@@ -288,9 +392,9 @@ class WriteAdapter:
                 and not can_start and self._compatible_now() and unsafe_reason(self._live_dps)):
             reason = unsafe_reason(self._live_dps)
         common = self._gate_reason()
-        reasons = {op: common or operation_reason(op, self._live_dps)
+        reasons = {op: common or self._decision(op)[0]
                    for op in ('feed', 'defrost', 'refilled')}
-        cancel_reason = common or operation_reason('cancel', self._live_dps)
+        cancel_reason = common or self._decision('cancel')[0]
         return {
             "can_cancel": cancel_reason is None,
             "cancel_reason": cancel_reason,
@@ -315,6 +419,7 @@ class WriteAdapter:
             "integrity_fault": integrity,
             "recovery_can_start": can_start,
             "recovery_phase": phase,
+            "recovery_resolution": dict(self._recovery_resolution) if self._recovery_resolution else None,
         }
 
     def add_listener(self, callback) -> Callable[[], None]:
@@ -384,7 +489,9 @@ class WriteAdapter:
             return "storage_fault"
         if integrity:
             return "integrity_fault"
+        cloud = self._cloud()
         if (self._submitting is not None or self._ack_wait is not None
+                or (cloud is not None and cloud.blocks_dispatch)
                 or getattr(transport, "_busy", True) is not False):
             return "busy"
         if self._collector is not None:
@@ -409,8 +516,12 @@ class WriteAdapter:
     async def async_submit(self, operation: str, dps: dict[str, bool | int | str], *,
                            base_revision: str | None = None, confirmed: bool = False,
                            unchanged: Callable[[], bool] | None = None) -> dict:
-        reason = (self._request_reason(operation, dps, base_revision, confirmed)
-                  or self._gate_reason() or operation_reason(operation, self._live_dps))
+        reason = self._request_reason(operation, dps, base_revision, confirmed) or self._gate_reason()
+        if reason is not None:
+            return self._response(False, reason)
+        await self._demand_cloud(schedule=operation == 'schedule')
+        self.bridge.flush()
+        reason = self._gate_reason() or self._decision(operation)[0]
         if reason is not None:
             return self._response(False, reason)
         # Loaded-code provenance needs file I/O: settle it BEFORE the final
@@ -426,7 +537,7 @@ class WriteAdapter:
         # One synchronous turn: final gates, revision, then transport admission.
         reason = (self._request_reason(operation, dps, base_revision, confirmed)
                   or self._gate_reason() or self._revision_reason(operation, base_revision)
-                  or operation_reason(operation, self._live_dps))
+                  or self._decision(operation)[0])
         if reason is not None:
             return self._response(False, reason)
         if operation == 'settings' and unchanged is not None and unchanged():
@@ -436,6 +547,7 @@ class WriteAdapter:
             selected_dps['140'] = self._feed_command()
         context = IntentContext(operation, "", self.transport.recovery_session_id,
                                 self.bridge.epoch, selected_dps)
+        self._recovery_resolution = None
         self._admitted_revision = base_revision
         self._submitting, self._caller = context, asyncio.current_task()
         self._marks, self._decisions = {}, {}
@@ -466,12 +578,7 @@ class WriteAdapter:
         return result
 
     def _feed_command(self):
-        status = decode_quick_feed(self._live_dps.get('140')).status
-        if status == 'ready':
-            return FEED_NOW_COMMAND
-        if status in ('idle', 'failed'):
-            return FEED_START_COMMAND
-        return None
+        return self._decision('feed')[1]
 
     async def _run_submit(self, context):
         transport = self.transport
@@ -603,8 +710,9 @@ class WriteAdapter:
                 or mark.operation_id != self.transport.pending_operation_id
                 or (caller is not None and (caller.cancelling() or caller.done()))):
             raise ValueError("write_adapter_refused")
+        self.bridge.flush()
         if (mark.epoch != context.epoch or not self._compatible_now()
-                or operation_reason(context.operation, self._live_dps)
+                or self._decision(context.operation)[0]
                 or (context.operation == 'feed' and context.dps.get('140') != self._feed_command())
                 or (context.operation == 'settings' and setting_request(context.dps) is None)
                 or (context.operation == 'schedule' and self._revision_reason(
@@ -627,10 +735,17 @@ class WriteAdapter:
             self._live_dps.clear()
             self._live_epoch = report.epoch
             self._live_sequence = -1
+            self._live_times.clear()
+            self._live_sequences.clear()
+            self._cloud_veto = False
         if report.sequence <= self._live_sequence:
+            if self._collector is not None:
+                self._collector.invalidate('recovery_rejected')
             return
         self._live_sequence = report.sequence
         self._live_dps.update(report.dps)
+        self._live_times.update({key: report.received_monotonic for key in report.dps})
+        self._live_sequences.update({key: report.sequence for key in report.dps})
         self._notify()
         collector = self._collector
         if collector is not None:
@@ -668,9 +783,15 @@ class WriteAdapter:
             self._track(self.hass.async_create_task(self._release(operation_id)))
 
     def _on_connection(self, epoch, connected):
+        self._recovery_resolution = None
         self._live_dps.clear()
         self._live_epoch = epoch
         self._live_sequence = -1
+        self._live_times.clear()
+        self._live_sequences.clear()
+        self._cloud_veto = False
+        if connected and self._cloud() is not None:
+            self._track(self.hass.async_create_task(self._demand_cloud()))
         if self._collector is not None:
             self._collector.invalidate("connection_interrupted")
         self._notify()
@@ -706,9 +827,14 @@ class WriteAdapter:
         self.bridge.flush()
         if (self._collector is not None or self._submitting is not None
                 or self._ack_wait is not None or any(self._faults()) or not self._context_current(context)
-                or not self._compatible_now() or unsafe_reason(self._live_dps)):
+                or not self._compatible_now() or unsafe_reason(self._live_dps)
+                or (self._cloud_veto and '140' not in self._live_sequences)):
             return None
-        collector = _Collector(context, self.bridge.last_sequence, self._recovery_predicate)
+        baseline = ({key: value for key, value in self._live_dps.items()
+                     if key in RECOVERY_SAFETY_KEYS}
+                    if self._live_epoch == context.epoch == self.bridge.epoch else {})
+        collector = _Collector(context, self.bridge.last_sequence, self._recovery_predicate,
+                               context.epoch, baseline)
         collector.timer = self.hass.loop.call_later(timeout, collector.expire)
         self._collector = collector
         return collector
@@ -752,13 +878,16 @@ class WriteAdapter:
                 or transport.recovery_session_id != context.session_id
                 or self._pending_operation() != context.operation
                 or self.bridge.epoch != context.epoch or not self._compatible_now()
-                or unsafe_reason(self._live_dps)):
+                or unsafe_reason(self._live_dps)
+                or (self._cloud_veto and '140' not in self._live_sequences)):
             return False
         return collector.approves()
 
     async def async_recover(self, operation_id: str, session_id: str, *,
                             confirmed: bool) -> bool:
         transport = self.transport
+        if confirmed is True and type(operation_id) is str and type(session_id) is str:
+            await self._demand_cloud()
         if (confirmed is not True or type(operation_id) is not str
                 or type(session_id) is not str
                 or not self._can_start(self._phase_view())
@@ -768,6 +897,7 @@ class WriteAdapter:
         collector = self._begin_collect(self.recovery_context(), RECOVERY_TIMEOUT)
         if collector is None:
             return False
+        self._recovery_resolution = None
         self._phase, self._reason = "collecting", None
         self._notify()
         task = self._track(asyncio.Task(self._run_recover(collector), loop=self.hass.loop,
@@ -803,6 +933,9 @@ class WriteAdapter:
             released = await transport.async_reconcile(
                 context.operation_id, verifier, confirmed=True, session_id=context.session_id)
             if released:
+                self._recovery_resolution = dict(operation_id=context.operation_id,
+                    session_id=context.session_id, operation=context.operation, outcome=collector.outcome)
+                self._resolution_epoch = context.epoch
                 self._phase, self._reason, self._result = "resolved", "local_uncertainty_cleared", None
                 return True
             if transport.needs_reconciliation:
@@ -833,6 +966,9 @@ class WriteAdapter:
             self._collector.invalidate("stopped")
         if self._ack_wait is not None:
             self._ack_wait.set()
+        if self._cloud_unsubscribe is not None:
+            self._cloud_unsubscribe()
+            self._cloud_unsubscribe = None
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
@@ -859,12 +995,18 @@ async def async_create_adapter(hass, entry, bridge, *, ack_predicate: AckPredica
     if witness is None or not callable(ack_predicate) or not callable(recovery_predicate):
         raise ValueError("write_adapter_unavailable")
     adapter = WriteAdapter(hass, entry, bridge, witness, ack_predicate, recovery_predicate)
-    adapter._unsubscribe = bridge.subscribe(adapter.on_report, adapter._on_connection)
     try:
+        adapter._unsubscribe = bridge.subscribe(adapter.on_report, adapter._on_connection)
+        # Same synchronous turn as subscribing: no report can fall between them.
+        adapter._seed_reported(getattr(entry.runtime_data, "reported_dps", None))
         adapter.transport = await bridge.async_enable_transport(
             witness, on_dispatch=adapter._on_dispatch)
     except BaseException:
-        adapter._unsubscribe()
-        adapter._unsubscribe = None
+        if adapter._unsubscribe is not None:
+            adapter._unsubscribe()
+            adapter._unsubscribe = None
+        if adapter._cloud_unsubscribe is not None:
+            adapter._cloud_unsubscribe()
+            adapter._cloud_unsubscribe = None
         raise
     return adapter

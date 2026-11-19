@@ -78,7 +78,7 @@ _PRINTABLE = _re.compile(r"\A[\x20-\x7e]+\Z")
 _DEVICE_ID = _re.compile(r"\A[0-9a-f]{44}\Z")
 _REQUEST_ID = _re.compile(r"\A[\x21-\x7e]{1,64}\Z")
 _DIGITS = _re.compile(r"\A[0-9]{1,1300}\Z")
-_SESSION_OPS = ("HOMES", "DEVICES")
+_SESSION_OPS = ("HOMES", "DEVICES", "DP_GET")
 
 
 class ProfileRejected(Exception):
