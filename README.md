@@ -8,7 +8,7 @@
 
 Developer notes: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-Home Assistant integration, version **0.5.1**, that controls a PetSafe FreshFeed feeder
+Home Assistant integration, version **0.5.2**, that controls a PetSafe FreshFeed feeder
 directly on your local network (local protocol 3.5, pinned `tinytuya==1.20.0`, which
 Home Assistant installs). Requires Home Assistant `2026.10.0` or later. Independent
 community software, not affiliated with PetSafe; the project icon is original artwork.

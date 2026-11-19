@@ -159,7 +159,7 @@ class DistributionTest(unittest.TestCase):
         self.assertEqual(hacs['name'], 'PetSafe FreshFeed')
         self.assertFalse(hacs.get('content_in_root', False))
         manifest = json.loads(contents(out)['manifest.json'])
-        self.assertEqual(manifest['version'], '0.5.1')
+        self.assertEqual(manifest['version'], '0.5.2')
         self.assertNotIn('after_dependencies', manifest)
         self.assertNotIn('dependencies', manifest)
         self.assertEqual(manifest['requirements'], ['tinytuya==1.20.0'])
@@ -172,7 +172,7 @@ class DistributionTest(unittest.TestCase):
     def test_early_compatibility_and_safety_contract(self):
         for path in ('README.md',):
             text = (ROOT / path).read_text()
-            for value in ('0.5.1', '2026.10.0', '1.20.0', '3.5'):
+            for value in ('0.5.2', '2026.10.0', '1.20.0', '3.5'):
                 self.assertIn(value, text, f'{path}: {value}')
             for value in ('administrator', 'offline', 'advisory'):
                 self.assertIn(value, text.lower(), f'{path}: {value}')
@@ -241,7 +241,7 @@ class DistributionTest(unittest.TestCase):
         out = self.good_build()
         manifest = json.loads(contents(out)['manifest.json'])
         self.assertEqual(manifest['domain'], 'petsafe_freshfeed')
-        self.assertEqual(manifest['version'], '0.5.1')
+        self.assertEqual(manifest['version'], '0.5.2')
         self.assertNotIn('after_dependencies', manifest)
         self.assertNotIn('tuya_local', manifest.get('dependencies', []))
         self.assertEqual(manifest['codeowners'], ['@sudolulo'])

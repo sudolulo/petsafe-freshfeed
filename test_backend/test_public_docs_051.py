@@ -55,7 +55,7 @@ class PublicDocs051(unittest.TestCase):
     def test_versions_and_pins(self):
         for path in READMES:
             text = flat(read(path))
-            for value in ('0.5.1', '2026.10.0', 'tinytuya==1.20.0', 'protocol 3.5'):
+            for value in ('0.5.2', '2026.10.0', 'tinytuya==1.20.0', 'protocol 3.5'):
                 self.assertIn(value, text, f'{path}: {value}')
             self.assertNotIn('0.5.0', text, path)
 

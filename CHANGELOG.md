@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.5.2] - Unreleased
+## [0.5.2] - 2026-11-19
 
 ### Changed
 - The integration now lives in its own repository, and releases ship as a single `petsafe_freshfeed.zip` that HACS installs. Installed files, entities and settings are unchanged.
