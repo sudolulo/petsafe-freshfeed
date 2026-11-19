@@ -1,0 +1,74 @@
+[
+  {
+    "name": "pre_dispatch-lock",
+    "initial": {
+      "state": "idle",
+      "can_cancel": true
+    },
+    "response": {
+      "success": false,
+      "error": {
+        "code": "service_validation_error"
+      }
+    },
+    "safe": true
+  },
+  {
+    "name": "pre_dispatch-witness",
+    "initial": {
+      "state": "idle",
+      "can_cancel": true
+    },
+    "response": {
+      "success": false,
+      "error": {
+        "code": "service_validation_error"
+      }
+    },
+    "safe": true
+  },
+  {
+    "name": "attempted-lock",
+    "initial": {
+      "state": "idle",
+      "can_cancel": true
+    },
+    "response": {
+      "success": true
+    },
+    "safe": false
+  },
+  {
+    "name": "attempted-witness",
+    "initial": {
+      "state": "idle",
+      "can_cancel": true
+    },
+    "response": {
+      "success": true
+    },
+    "safe": false
+  },
+  {
+    "name": "pending_changed-lock",
+    "initial": {
+      "state": "idle",
+      "can_cancel": true
+    },
+    "response": {
+      "success": true
+    },
+    "safe": false
+  },
+  {
+    "name": "pending_changed-witness",
+    "initial": {
+      "state": "idle",
+      "can_cancel": true
+    },
+    "response": {
+      "success": true
+    },
+    "safe": false
+  }
+]

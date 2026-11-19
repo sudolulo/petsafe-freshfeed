@@ -8,7 +8,7 @@ The owner selected latest actual local DP140, not an epoch-long local history ve
 
 Review A: pending → feeding → idle was incorrectly locked out until reconnect. The RED targeted run showed 7 expected failures (four admission/view cases and three dispatch cases), with 10 passing. The corrected targeted run, including unsafe-later and recovery checks, passed 25 cases. Feed idle selects the existing FEED_START command. Review B: the late recovery events lacked the monotonic receipt timestamp and failed during delivery instead of final validation. They now have the five-field report shape and assert the late unsafe value reaches the adapter; no mutation experiment was run.
 
-Exact offline verification with pinned TinyTuya and account harness and `PETSAFE_PINNED_TUYA_LOCAL` unset: backend **589 OK**, HA **1500 passed, 1 skipped**, npm **262 passed, 1 skipped**. `git --no-pager diff --check` and strings/en `cmp` succeeded. The first HA full run exposed three outdated history-lockout assertions (1494 passed, 1 skipped); these were updated to the owner decision before the green rerun. No live HA or device testing was performed. Parent rerun (2026-11-19, same environment): backend **589 OK**, HA **1500 passed, 1 skipped**, npm **262 passed, 1 skipped**, diff-check and strings/en `cmp` zero. Independent review then corrected the README latest-local wording and removed the obsolete `cancel_observed` test plumbing; afterwards backend 589 OK, `test_write_adapter.py` 628 passed, npm 262 passed, diff-check zero, and a second independent review found no issues.
+Exact offline verification with pinned TinyTuya and account harness and `PETSAFE_PINNED_TUYA_LOCAL` unset: backend **589 OK**, HA **1500 passed, 1 skipped**. `git --no-pager diff --check` and strings/en `cmp` succeeded. The first HA full run exposed three outdated history-lockout assertions (1494 passed, 1 skipped); these were updated to the owner decision before the green rerun. No live HA or device testing was performed. Parent rerun (2026-11-19, same environment): backend **589 OK**, HA **1500 passed, 1 skipped**, diff-check and strings/en `cmp` zero. Independent review then corrected the README latest-local wording and removed the obsolete `cancel_observed` test plumbing; afterwards backend 589 OK, `test_write_adapter.py` 628 passed, diff-check zero, and a second independent review found no issues.
 
 This continuation confirmed and fixed the reported-DP140 abandonment defect:
 12 new schedule/settings cases (idle/ready/failed, baseline or fresh) failed on
@@ -20,14 +20,12 @@ Submitted credentials are now removed before the cancellable lookup; the account
 flow suite passed 87 tests with its existing isolation-only skip.
 
 Final exact prescribed commands, with all three pins: backend **589 tests OK**
-(33.774 s), HA **1503 passed, 1 skipped** (279.35 s), npm **262 passed,
-1 skipped** (263 total; 7.729 s). All exit statuses were zero, including
+(33.774 s), HA **1503 passed, 1 skipped** (279.35 s). All exit statuses were zero, including
 `git --no-pager diff --check` and strings/en `cmp`. With only
 `PETSAFE_PINNED_TUYA_LOCAL` unset: backend **589 OK** (30.743 s), HA
 **1503 passed, 1 skipped** (230.96 s), both exit zero. No missing-legacy skip.
-HA skips the subprocess-isolation-only inner test in the outer run; Node skips
-the optional real-HA cancel fixture when its environment input is absent.
-Compared with the supplied 676/751/239 passing baseline, totals are -87/+752/+23.
+HA skips the subprocess-isolation-only inner test in the outer run.
+Compared with the supplied backend/HA 676/751 passing baseline, totals are -87/+752.
 The retirement and port ledger below explains the removed journal (26), borrowed
 binding/compatibility (100), and bridge (32 collected HA cases) coverage, plus
 flow/migration retirement; subsequent account/cloud/recovery regressions add tests.
@@ -35,7 +33,7 @@ These counts do not independently prove every removed assertion was retained.
 
 | Inherited finding | Resolution and evidence |
 | --- | --- |
-| Schedule state viewing does not invoke a non-polling sensor | Cached HA state reads intentionally do not perform I/O. Card dialog opening and retry call `homeassistant.update_entity`; other clients must explicitly refresh. Existing DOM and schedule tests pass. No periodic reads added. Arbitrary non-card cached views do not trigger reads. |
+| Schedule state viewing does not invoke a non-polling sensor | Cached HA state reads intentionally do not perform I/O. Clients must explicitly refresh using `homeassistant.update_entity`. Existing schedule tests pass. No periodic reads added. |
 | Reported DP140 could bypass missing schedule/settings readback through abandonment | Confirmed by 12 failing operation-specific tests; fixed by requiring no DP140 for abandonment. Strict recovery is unchanged. |
 | 26 versus 27 registry rows | Baseline 3678602 sensor setup already adds disabled-by-default `quick_feed_state` beyond the 18 normal sensors. Current frozen fixture covers all 27 rows, not a new runtime entity. Upgrade tests compare row IDs/names/unique IDs/device bindings and retained records across reload/reconfigure; this is synthetic evidence, not a live inventory. |
 | Whole-change independent review coverage | Still incomplete: the inherited reviewer did not line-review all changed/deleted files or reconcile every removed assertion. This continuation was explicitly forbidden to delegate and does not claim an independent review of its own fixes. Parent must complete that acceptance gate before release. |
@@ -54,18 +52,15 @@ Independent review found cloud evidence still requires fresh local safety report
 that active or malformed evidence can retain a veto; both READMEs now state those
 limits. Review also identified obsolete challenge instructions in the translations;
 both matching files now direct users to check their account instead. The local veto's
-broader behavior remains the previously recorded parent decision below. Card reference
-review identified the raw object-ID syntax, now documented. No live operation occurred.
+broader behavior remains the previously recorded parent decision below. No live operation occurred.
 
-Offline checks: public docs 11 tests OK; distribution 26 tests OK; combined card docs
-and release graph 5 tests passed; full backend 586 tests OK; npm 262 passed, one
-existing skipped. Strings/en byte comparison and `git --no-pager diff --check` passed.
+Offline checks: public docs 11 tests OK; distribution 26 tests OK; full backend 586 tests OK. Strings/en byte comparison and `git --no-pager diff --check` passed.
 Root README 1235 whitespace words; integration README 1057. Historical changelog
 entries remain unchanged. These checks do not establish publication or hardware behavior.
 
 ## Rollout and rollback (maintainer only)
 
-Deployment, parity checks, demos, screenshots and dashboard resource changes require separate authorization; none are performed by this guide. Before deployment, make a full secret Home Assistant backup and record the owned entry, entity and device inventory, observation store and complete retained-intent store including SQLite sidecars. Verify the existing owned installation before deploying. Never send a Feed command as an upgrade check.
+Deployment and parity checks require separate authorization; none are performed by this guide. Before deployment, make a full secret Home Assistant backup and record the owned entry, entity and device inventory, observation store and complete retained-intent store including SQLite sidecars. Verify the existing owned installation before deploying. Never send a Feed command as an upgrade check.
 
 The historical device identifier namespace `tuya_local` remains identity data, not a dependency; keep the original device leaf and all entity IDs. Owned setting suffix inventory is `-switch_stainless_inserts`, `-switch_meal_counter`, `-number_brightness`, `-sensor_quick_feed_state`; existing owned rows use entry ID and role. The observation store and `.storage/petsafe_freshfeed/<binding_id>/intent.sqlite` must never be deleted or reset to resolve uncertainty.
 
@@ -73,7 +68,7 @@ Only after a secret backup and confirmed owned setup, the release owner may opti
 
 ## Task 10 integrated cloud verification (offline)
 
-### Final integrated review (Tasks 6-9, schedule hook, card gate correction)
+### Final integrated review (Tasks 6-9 and schedule hook)
 
 Three independent read-only reviewers covered: (1) all nine cloud-read
 contracts, (2) session/flow, secrets/diagnostics and CloudRead lifecycle,
@@ -109,20 +104,13 @@ counts below are prior-run evidence, not a rerun for this follow-up.
 `test_cloud_ready_feed_command_is_rechecked_at_dispatch` retains its explicit
 cloud-ready expiry and local idle/pending replacement coverage.
 
-Card gate correction re-verified: restoring the baseline unknown-status gate in
-`_canFreshfeedAction` makes `rendered Feed and Defrost buttons follow backend
-gates when quick status is unknown` fail with `feed unknown true`; the current
-gate passes. Schedule hook properties are covered by
-`test_ha/test_schedule.py` (shared budget, Fully local no network/Repairs/
-reauth, local precedence) and the DOM refresh tests (silent failure, retry).
+Schedule hook properties are covered by `test_ha/test_schedule.py` (shared budget, Fully local no network/Repairs/reauth, local precedence).
 
 Prior full-tree verification for the earlier ledger correction (supersedes the earlier
 1428-pass run): backend **575 tests OK** (30.196 s); HA **1444 passed,
-1 skipped** (234.37 s); Node **259 passed, 1 skipped**, 260 total
-(7.458 s). That HA collection was 16 cases larger than the previously
+1 skipped** (234.37 s). That HA collection was 16 cases larger than the previously
 recorded 1428-pass run; that documentation-only pass added or removed no tests.
-The existing HA isolation-only subprocess fixture skip and Node real-HA-response
-fixture skip remain; no new skips. All five commands below passed with the
+The existing HA isolation-only subprocess fixture skip remains; no new skips. All four commands below passed with the
 three prescribed pins, without disabling logging:
 
 ```bash
@@ -130,7 +118,6 @@ three prescribed pins, without disabling logging:
 # PETSAFE_ACCOUNT_HARNESS to your local test dependency paths as needed.
 python3 -m unittest discover -s test_backend -q
 python3 -m pytest test_ha -q --asyncio-mode=auto -p no:cacheprovider
-npm test
 git --no-pager diff --check
 cmp custom_components/petsafe_freshfeed/strings.json custom_components/petsafe_freshfeed/translations/en.json
 ```
@@ -148,28 +135,12 @@ certify hardware behavior or resolve the residual observations above.
 |---|---|---|
 | Important | A timed-out caller did not fence a coalesced request while another waiter remained. | Fixed: any caller timeout invalidates the shared generation; actual I/O still drains. Regression failed on published DP1 before the fix and passed afterwards. Cancellation of one of multiple waiters continues to preserve the other waiter. |
 | Important | A read-only entry had no initial/reconnect DP140 demand because it has no write adapter. | Fixed with a nonblocking, LAN-first read-only connection demand using the same reader and budget; owned-hub regression failed waiting for the initial request before the fix. |
-| Important | The card required a known quick-feed status even when the backend allowed Feed or Defrost under the missing-DP140 local exception. | Fixed under parent authorization: backend eligibility is authoritative for unknown status; reported pending/feeding vetoes remain. The new control regression failed on `feed: true` before the fix; rendered-button regressions cover both backend flags and reported statuses. |
 | Not confirmed | Pending, idle, then pending was claimed to prevent Cancel. | The veto condition applies only when the current status is idle, ready or failed; current pending does not satisfy it. Other gates still apply. |
 | Residual limitation (not a verified server failure) | A syntactically valid but incorrect stored ecode cannot be detected by structural restore; a server response not recognized as a session rejection can leave cloud reads unavailable without reauth. | Recognized session rejection and structural restore failure are covered separately; unknown response/decryption failures remain fixed malformed/unavailable outcomes, not credential rejection. No live evidence establishes the server response to such corruption. This documentation pass does not claim this limitation was fixed. |
 
 Fresh full offline verification with all three prescribed pins: backend 575 tests
-OK (26.858 s); HA 1407 passed, 1 skipped (192.82 s); npm 257 passed,
-1 skipped, 258 total (6.954 s). `git --no-pager diff --check` and strings/en
-`cmp` passed. This earlier run preceded the card-control correction and does
-not establish live device behavior. No live requests or credentials were used.
-
-### Latest card and schedule-hook verification
-
-With the three plan pins, `python3 -m unittest discover -s test_backend -q`
-ran 575 tests OK; `python3 -m pytest test_ha
--q --asyncio-mode=auto -p no:cacheprovider` passed 1408 with 1 skipped;
-`npm test` passed 259 with 1 skipped (260 total). `git --no-pager diff
---check` and the strings/en `cmp` passed. The existing skip reasons are below.
-The schedule refresh regressions cover repeated demand under the shared budget,
-Fully local without network/Repairs/reauth, cloud-to-local precedence, and no
-cloud acknowledgement; the card's failed refresh remains silent and unknown.
-The supplied-only LAN and cloud evidence is recorded below; no live requests,
-credentials, device commands, commits or deployment were used.
+OK (26.858 s); HA 1407 passed, 1 skipped (192.82 s). `git --no-pager diff --check` and strings/en
+`cmp` passed. This earlier run does not establish live device behavior. No live requests or credentials were used.
 
 ### Takeover finding resolution and post-fix verification
 
@@ -178,23 +149,18 @@ credentials, device commands, commits or deployment were used.
 | High | Timed-out cloud I/O kept command admission busy | Separate valid-result dispatch fencing from actual I/O lifetime. Timed-out/cancelled generations no longer block local fallback or rejoin a stale task; actual work remains tracked and drained. The fallback regression failed on `admitted` before the fix and passes afterwards. |
 | Medium | Failed initial DP1 read had no later schedule-specific demand | Explicit schedule sensor refresh (`homeassistant.update_entity`) and schedule edit admission demand missing DP1 using the shared cooldown. Edit regression failed with zero fetches before the fix. A failed refresh followed by a later refresh at 60 seconds succeeds. |
 | Medium | Connection proactively demanded DP1 | Removed hub connection DP1 demand. Connection DP140 demand remains in the adapter and may incidentally return DP1. Regression initially failed because schedule was already last-known before refresh. |
-| Medium | Schedule refresh regression covered calls but not successful dialog state propagation | Added a dialog regression that opens with an unknown schedule, receives a cloud-sourced HA state update, edits the resulting schedule and saves with its cloud base revision. |
 
 The sensor remains non-polling: reading cached HA state does not issue network
 requests. Its explicit refresh hook supports schedule-view clients using
-`homeassistant.update_entity`; the card calls that hook when opening the dialog
-and offers a retry while the schedule is unavailable. Schedule edit demand is wired independently of
+`homeassistant.update_entity`. Schedule edit demand is wired independently of
 whether DP140 was already observed. Existing deferred-result/local-precedence
 regressions now explicitly initiate their schedule read rather than relying on
 the removed proactive connection request. No safety assertions were deleted.
 
-Post-card-change exact full commands with all three plan pins: backend 575 tests OK
-(26.844 s); HA 1405 passed, 1 skipped (182.87 s); npm 257 passed, 1 skipped,
-258 total (6.154 s). `git --no-pager diff --check` and strings/en `cmp` passed.
+Full commands with all three plan pins: backend 575 tests OK
+(26.844 s); HA 1405 passed, 1 skipped (182.87 s). `git --no-pager diff --check` and strings/en `cmp` passed.
 With only `PETSAFE_PINNED_TUYA_LOCAL` unset: backend 575 OK (25.831 s), HA
-1405 passed, 1 skipped (193.08 s). The targeted DOM suite passed 76 tests with
-1 existing skip. No new skips; the two added card regressions account for the
-Node count increase from the prior seat. No commits, live operations or credentials were used.
+1405 passed, 1 skipped (193.08 s). No commits, live operations or credentials were used.
 The supplied independent review was targeted, not exhaustive. Per takeover
 instruction no additional reviewer was delegated; these corrections were
 self-checked against the three findings and the full offline suites.
@@ -205,19 +171,13 @@ Verification used the three pins in the implementation plan. The exact full
 commands produced: backend `python3 -m unittest discover -s test_backend -q`:
 575 tests OK (26.532 s); HA `python3 -m pytest
  test_ha -q --asyncio-mode=auto -p no:cacheprovider`: 1404 passed, 1 skipped
-(213.98 s); `npm test`: 255 passed, 1 skipped (256 total, 7.42 s);
-`git --no-pager diff --check` and strings/en `cmp` both passed. The HA skip is
-an isolation-only fixture run in a subprocess; the Node skip requires a supplied
-real-HA response fixture. No new skip was introduced by this verification. With
+(213.98 s); `git --no-pager diff --check` and strings/en `cmp` both passed. The HA skip is
+an isolation-only fixture run in a subprocess. No new skip was introduced by this verification. With
 `PETSAFE_PINNED_TUYA_LOCAL` unset and the other two pins retained, the same full
 backend command passed 575 tests (25.980 s) and the same HA command passed 1404
 with 1 skipped (209.00 s).
 
-The first Node run had 16 failures because the Playwright Chromium binary was
-absent, not because an assertion failed. Installing the pinned Playwright
-Chromium with `npx --yes playwright install chromium` and repeating the exact
-`npm test` resolved those launch errors. No live feeder, HA host, credentials,
-cloud account or command was used.
+No live feeder, HA host, credentials, cloud account or command was used.
 
 Owner-supplied observations, not reproduced here: seven read-only LAN probes
 returned no DP1/140; UPDATEDPS yielded empty acknowledgements without a push.
@@ -277,7 +237,7 @@ Final verification with the plan's three pinned environment exports:
 also passed (1 test, 0.065s); its pre-fix run failed on all six invalid-secret
 cases.
 `git --no-pager diff --check` and strings/en `cmp` passed.
-HA/Node suites were not rerun for this account-only task. Independent review
+The HA suite was not rerun for this account-only task. Independent review
 was not dispatched: the takeover explicitly prohibits delegation. Parent must
 perform that separate review; this is not a claim of independent certification.
 
@@ -344,13 +304,13 @@ idle. Task 6 alone implements that read boundary and session lifecycle.
 
 Task 5 full verification rerun after the test-only refinement, with the plan's
 pinned environment: backend 558 OK (24.641s); HA 734 passed, 1 skipped
-(154.99s); npm 254 passed, 1 skipped (255 total; 6.13s). The refinement uses
+(154.99s). The refinement uses
 the fake device's full-status monitor for all six abandonment cases rather than
 injecting reports directly. Earlier targeted Python recovery/upgrade/settings/
-cancel run: 340 passed (74.52s); targeted Node run: 74 passed, 1 skipped.
+cancel run: 340 passed (74.52s).
 Diff whitespace and strings/en byte comparison passed on this rerun. Initial
 RED proved no_food denial, unsafe-then-safe erasure,
-missing baseline/abandonment and missing card resolution parsing/latch release;
+missing baseline/abandonment;
 a later RED proved duplicate/reordered reports were silently ignored during
 recovery. Full-suite failures exposed two exact-view fixtures needing the new
 nullable field and a test-invoked expiry timer that needed explicit cancellation;
@@ -472,7 +432,7 @@ The borrowed transport and migration tests are not substitutes for owned-path sa
 | `test_backend/test_critical_transport.py` TransportTests, DispatchHookTests, witness-model tests, ShutdownTests | All constructor calls now use `async_create_owned` and public `Owner.api`/`Owner.lock`; 89 tests retain send, persistence, drain, cancellation, byte-bound and logger assertions. The borrowed constructor signature/re-export assertions are replaced by owned signature and neutral report immutability contracts. |
 | `test_ha/test_write_adapter.py` (49 tests) | Real OwnedSource and pinned TinyTuya over FakeDevice protocol 3.5. Decoded CONTROL frames replace synthetic byte counters; socket restoration faults replace vendor-method monkeypatches (which correctly fail provenance). Cancellation is injected at the real dispatch boundary. |
 | `test_ha/test_write_lifecycle.py` (10 tests) | Owned registry leaf, real source, protocol-3.5 device and unchanged SQLite provision/open contract. Foreign borrowed API replacement becomes owned retirement/reconstruction with a new API; retained-intent and no-replay assertions remain. |
-| `test_ha/test_cancel_safety.py` | Uses the owned adapter fixture, public provenance method and persistent fake disconnect; command/service/DOM latch assertions remain. |
+| `test_ha/test_cancel_safety.py` | Uses the owned adapter fixture, public provenance method and persistent fake disconnect; command/service latch assertions remain. |
 | `test_ha/test_attach_retry.py`, `test_claim_retry.py`, `test_unload_refusal.py` | Owned source start/claim/stop seams replace borrowed attachment. Start retry uses a shortened test-only OWNED_RETRY; stale-start gate is after real admission so parked drain exercises a live owned client. |
 | `test_ha/test_parity_acceptance.py` | Real protocol CONTROL payloads and post-send reports, retained SQLite records across reloads, observation store and stale revision/session assertions remain. |
 | `test_ha/test_owned_source.py::test_socket_hook_parity_with_legacy` | Replaced by `test_owned_socket_hook_contract`: explicit ordered report/connection sequence, six epoch advances, DP allowlist, ack eligibility and hook cleanup. No legacy implementation comparison. |
@@ -542,5 +502,5 @@ The earlier 754-pass full HA gate preceded the latest cancellation-test amendmen
 both fresh full-suite reruns above include that amendment and the public Owner
 fixture. The additional in-flight socket-send cancellation case accounts for the
 increase to 755 passing HA tests; the pre-existing skip is unchanged.
-No npm run was needed for this Python-only task. Parent independent review remains
+Parent independent review remains
 outstanding under the explicit no-delegation instruction.

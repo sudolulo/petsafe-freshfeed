@@ -53,9 +53,9 @@ async def test_finish_submit_rejects_only_proven_unsent_cancel(adapters, store, 
 async def test_cancel_real_service_response_drives_dom_latch(
         adapters, store, writes, stage, failure):
     """Real transport -> adapter -> HA service/WS error mapping -> card DOM."""
+    import hashlib
     import json
     import logging
-    import os
     from pathlib import Path
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -63,6 +63,9 @@ async def test_cancel_real_service_response_drives_dom_latch(
     from homeassistant.components.websocket_api.commands import handle_call_service
     from custom_components.petsafe_freshfeed.services import async_register
 
+    fixture_bytes = (Path(__file__).parent / 'fixtures/cancel-service-contract.json').read_bytes()
+    assert hashlib.sha256(fixture_bytes).hexdigest() == 'ec5c587140a40c8aa255c96e188d85f9b3da8373d9da8bee63d1b511f1ef7aab'
+    fixture = next(case for case in json.loads(fixture_bytes) if case['name'] == f'{failure}-{stage}')
     ctx = adapters
     witness = GatedWitness(await _provision(store))
     adapter = await _adapter(ctx, witness)
@@ -107,6 +110,12 @@ async def test_cancel_real_service_response_drives_dom_latch(
     assert len(responses) == 1
     assert len(writes) == (1 if failure == 'attempted' else 0)
     safe = failure == 'pre_dispatch'
+    assert {key: initial[key] for key in fixture['initial']} == fixture['initial']
+    projected = {'success': responses[0]['success']}
+    if 'error' in responses[0]:
+        projected['error'] = {'code': responses[0]['error']['code']}
+    assert projected == fixture['response']
+    assert safe is fixture['safe']
     assert responses[0]['success'] is (not safe)
     if safe:
         assert responses[0]['error']['code'] == 'service_validation_error'

@@ -6,9 +6,21 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 class RootLayoutTest(unittest.TestCase):
-    def test_manifest_and_unfiltered_workflow(self):
+    def assert_manifest(self, manifest):
         tree = {"name": "PetSafe FreshFeed", "content_in_root": False, "homeassistant": "2026.10.0", "zip_release": False}
         release = {**tree, "zip_release": True, "filename": "petsafe_freshfeed.zip"}
-        self.assertIn(json.loads((ROOT / "hacs.json").read_text()), (tree, release))
+        self.assertIn(set(manifest), (set(tree), set(release)))
+        for key, value in manifest.items():
+            self.assertIs(type(value), bool if key in ("content_in_root", "zip_release") else str)
+        self.assertIn(manifest, (tree, release))
+
+    def test_numeric_booleans_rejected(self):
+        for key in ("content_in_root", "zip_release"):
+            for value in (0, 1):
+                with self.subTest(key=key, value=value), self.assertRaises(AssertionError):
+                    self.assert_manifest({"name": "PetSafe FreshFeed", "content_in_root": False, "homeassistant": "2026.10.0", "zip_release": False, key: value})
+
+    def test_manifest_and_unfiltered_workflow(self):
+        self.assert_manifest(json.loads((ROOT / "hacs.json").read_text()))
         workflow = (ROOT / ".github/workflows/validate.yml").read_text()
         self.assertRegex(workflow, r"(?m)^on:\n  push:\n  pull_request:\n  workflow_dispatch:\n(?=\S)")
