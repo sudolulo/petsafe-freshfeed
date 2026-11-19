@@ -1,6 +1,6 @@
 # Changelog
 
-## Integration [0.5.1] - 2026-11-18
+## Integration [0.5.1] - 2026-11-19
 
 ### Removed
 - Retired the borrowed backend, setup and migration, its dependency and raw profile.
@@ -10,10 +10,14 @@
 - Add on-demand read-only cloud data and Fully local mode. Fresh local evidence can permit controls when quick-feed state was never reported, with residual risk of an extra meal.
 - Correct standalone documentation and empty-feeder recovery.
 
-## Card [0.4.1] - 2026-11-18
+## Card [0.4.1] - 2026-11-19
 
 ### Fixed
 - Release a matching operation/session latch after local abandonment and show execution unknown. The 0.5.0 backend retains the strict fallback.
+- Unknown quick-feed state no longer blocks Feed or Defrost on its own; the integration's admission decides, and active or pending states still block.
+
+### Added
+- Opening the schedule dialog requests a schedule refresh, with a retry button while the schedule is unknown.
 
 ## Integration [0.5.0] - 2026-11-18
 

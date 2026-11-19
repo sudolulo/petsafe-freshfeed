@@ -216,7 +216,7 @@ def _duplicate_reason(hass, device_id: str) -> str | None:
 
 
 class FreshFeedConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Account sign-in to an owned entry, or the legacy tuya_local pick."""
+    """PetSafe account sign-in that creates an owned entry."""
 
     VERSION = 1
     MINOR_VERSION = 2
