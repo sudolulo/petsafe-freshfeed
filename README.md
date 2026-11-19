@@ -1,13 +1,17 @@
 # PetSafe FreshFeed
 
-Developer notes: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+[![HACS custom](https://img.shields.io/badge/HACS-custom-orange)](https://hacs.xyz/docs/faq/custom_repositories/)
+[![Release](https://img.shields.io/github/v/release/sudolulo/petsafe-freshfeed)](https://github.com/sudolulo/petsafe-freshfeed/releases)
+[![License](https://img.shields.io/github/license/sudolulo/petsafe-freshfeed)](LICENSE)
 
-<img src="assets/brand/readme.png" width="192" alt="Original teal and navy six-compartment feeder mark">
+<img src="docs/images/feeder.jpg" height="360" alt="PetSafe FreshFeed feeder (product photo: PetSafe)"> <img src="docs/images/feeding.png" height="360" alt="Pet Feeder Card during a feed, with synthetic data">
+
+Developer notes: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 Home Assistant integration, version **0.5.1**, that controls a PetSafe FreshFeed feeder
 directly on your local network (local protocol 3.5, pinned `tinytuya==1.20.0`, which
 Home Assistant installs). Requires Home Assistant `2026.10.0` or later. Independent
-community software, not affiliated with PetSafe; the logo is original artwork.
+community software, not affiliated with PetSafe; the project icon is original artwork.
 
 Only first Wi-Fi pairing and firmware updates need the official PetSafe app.
 

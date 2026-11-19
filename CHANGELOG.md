@@ -4,6 +4,7 @@
 
 ### Changed
 - The integration now lives in its own repository, and releases ship as a single `petsafe_freshfeed.zip` that HACS installs. Installed files, entities and settings are unchanged.
+- The README shows a feeder photo and a card screenshot with synthetic data.
 
 ## Integration [0.5.1] - 2026-11-19
 
