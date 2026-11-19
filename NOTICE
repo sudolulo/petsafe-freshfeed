@@ -1,17 +1,15 @@
-pet-feeder-card
-Copyright 2026 flan <holden@arch.fyi>
+PetSafe FreshFeed community integration
+Copyright 2026 flan
 
+Project code and artwork are distributed under the MIT License. The account
+sign-in package includes ported third-party code; see "Third-party code" below.
 Parts of this project were written with the assistance of AI coding agents.
-
-The raw-data header's six-compartment feeder mark is original project artwork,
-not a PetSafe manufacturer logo. PetSafe and FreshFeed are trademarks of their
-respective owners. This project is not affiliated with either trademark owner,
-and the card includes no external manufacturer artwork.
-
-docs/whisker-reference.png is a screenshot from the Whisker Card project
-(https://github.com/homeassistant-extras/whisker, MIT licence), kept as a visual reference.
-docs/freshfeed-product.jpg is PetSafe's product photo of the FreshFeed (PFD00-18290),
-kept as an artwork reference only.
+The six-compartment feeder mark is original project artwork, not a manufacturer
+logo. PetSafe, FreshFeed and Aqara are trademarks of their respective owners.
+This project is not affiliated with or endorsed by those owners.
+The card layout was inspired by Whisker Card
+(https://github.com/homeassistant-extras/whisker, MIT license).
+No manufacturer artwork or reference screenshots are included.
 
 Third-party code: tuya-mobile
 The account sign-in package (custom_components/petsafe_freshfeed/account/)

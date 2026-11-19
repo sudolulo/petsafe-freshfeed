@@ -22,7 +22,7 @@ INPUTS = {
 def expand(name, overrides=None):
     doc = yaml.load_yaml(str(ROOT / f'{name}.yaml'))
     bp = models.Blueprint(doc, expected_domain='automation', schema=AUTOMATION_BLUEPRINT_SCHEMA)
-    assert bp.metadata['source_url'] == f'https://github.com/sudolulo/petsafe-freshfeed/blob/main/blueprints/automation/petsafe_freshfeed/{name}.yaml'
+    assert bp.metadata['source_url'] == f'https://github.com/sudolulo/petsafe-freshfeed/blob/trunk/blueprints/automation/petsafe_freshfeed/{name}.yaml'
     assert bp.metadata['homeassistant']['min_version'] == '2026.10.0'
     inputs = models.BlueprintInputs(bp, {'alias': name, 'use_blueprint': {'path': f'{name}.yaml', 'input': INPUTS[name] | (overrides or {})}})
     inputs.validate()

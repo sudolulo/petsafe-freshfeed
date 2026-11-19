@@ -1,30 +1,24 @@
-# PetSafe FreshFeed and Pet Feeder Card
+# PetSafe FreshFeed
 
-This repository contains two independently versioned parts:
+Developer notes: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-- **PetSafe FreshFeed integration 0.5.1**: controls a PetSafe FreshFeed feeder directly on
-  your local network (local protocol 3.5, pinned `tinytuya==1.20.0`, which Home Assistant
-  installs). Requires Home Assistant `2026.10.0` or later.
-- **Pet Feeder Card 0.4.1**: a dashboard card for the FreshFeed integration and for the
-  Aqara C1 feeder.
+<img src="assets/brand/readme.png" width="192" alt="Original teal and navy six-compartment feeder mark">
 
-Independent community software, not affiliated with PetSafe or Aqara.
+Home Assistant integration, version **0.5.1**, that controls a PetSafe FreshFeed feeder
+directly on your local network (local protocol 3.5, pinned `tinytuya==1.20.0`, which
+Home Assistant installs). Requires Home Assistant `2026.10.0` or later. Independent
+community software, not affiliated with PetSafe; the logo is original artwork.
+
 Only first Wi-Fi pairing and firmware updates need the official PetSafe app.
 
 ## Installation
 
-Integration: in HACS, add `https://github.com/sudolulo/petsafe-freshfeed` as a custom
-repository (category **Integration**) and download it, or copy
-`custom_components/petsafe_freshfeed` into your `custom_components` folder. Restart
-Home Assistant.
-
-Card: in HACS, add `https://github.com/sudolulo/pet-feeder-card` (category
-**Dashboard**), or copy all four modules (`pet-feeder-card.js`, `freshfeed-model.js`,
-`pet-feeder-card-editor.js`, `freshfeed-editor-model.js`) together into
-`/config/www/pet-feeder-card/` and register `pet-feeder-card.js` as a module resource.
+In HACS, add `https://github.com/sudolulo/petsafe-freshfeed` as a custom repository
+(category **Integration**) and download it, or copy `custom_components/petsafe_freshfeed`
+into your `custom_components` folder. Restart Home Assistant.
 
 Home Assistant installs one TinyTuya shared by every integration. If another
-integration needs a different version, the feeder entry stays unavailable
+integration needs a different version, this entry stays unavailable
 (`owned_source_incompatible`) rather than run unchecked code.
 
 ## Sign in and setup
@@ -49,7 +43,7 @@ stored cloud session (sid and ecode). Upgraded entries start Fully local. A vali
 session is restored after a restart; if it is rejected or cannot be restored, Repairs
 asks you to sign in again through Home Assistant while local operation continues.
 
-**Privacy.** Your password is never stored, nor your email. The device ID, local key,
+**Privacy.** Sign-in and optional reads contact the PetSafe/Tuya API for your region with fixed technical headers. Sign-in attempts are limited to one per 60 seconds. Your password is never stored, nor your email. The device ID, local key,
 address and cloud session are stored unencrypted in the config entry, like other Home
 Assistant entries, and kept out of logs and diagnostics. Whether sign-in signs the
 phone app out has not been checked.
@@ -120,33 +114,16 @@ old command ran or that the tray was filled. New commands are checked separately
 - Uncertain command: inspect the feeder and use recovery.
 - Do not delete or reset storage, or repeat a possibly sent command.
 
-## Pet Feeder Card
-
-The card shows a status header, product artwork, round action buttons, a chip, a food
-gauge and a metrics footer for two models: `freshfeed` (PetSafe FreshFeed) and
-`aqara_c1` (Aqara C1, for example via Zigbee2MQTT). With the integration and controls
-enabled, the FreshFeed dialog can save schedules, issue guarded commands and run
-recovery; it is not read-only. A locally abandoned recovery shows "Local uncertainty
-cleared; execution unknown." `mode: raw` shows selected entity states literally,
-without actions or inferred meaning. The visual editor discovers entities where
-registry access permits; manual YAML remains available. The full configuration
-reference is in the [card README](https://git.arch.fyi/flan/pet-feeder-card/src/branch/main/distribution/README-card.md).
-
 ## Blueprints
 
 HACS does not automatically install root blueprints; import them or copy the YAML into
 `/config/blueprints/automation/petsafe_freshfeed/`. They notify or update helpers, not
 feeder commands. Links are source locations, not a claim of publication.
 
-- Low estimated meals: [source](https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/main/blueprints/automation/petsafe_freshfeed/low_estimated_meals.yaml) / [import](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fsudolulo%2Fpetsafe-freshfeed%2Fmain%2Fblueprints%2Fautomation%2Fpetsafe_freshfeed%2Flow_estimated_meals.yaml)
-- Feeder attention: [source](https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/main/blueprints/automation/petsafe_freshfeed/feeder_attention.yaml) / [import](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fsudolulo%2Fpetsafe-freshfeed%2Fmain%2Fblueprints%2Fautomation%2Fpetsafe_freshfeed%2Ffeeder_attention.yaml)
-- Refill/cleaning: [source](https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/main/blueprints/automation/petsafe_freshfeed/refill_cleaning_reminder.yaml) / [import](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fsudolulo%2Fpetsafe-freshfeed%2Fmain%2Fblueprints%2Fautomation%2Fpetsafe_freshfeed%2Frefill_cleaning_reminder.yaml)
+- Low estimated meals: [source](https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/trunk/blueprints/automation/petsafe_freshfeed/low_estimated_meals.yaml) / [import](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fsudolulo%2Fpetsafe-freshfeed%2Ftrunk%2Fblueprints%2Fautomation%2Fpetsafe_freshfeed%2Flow_estimated_meals.yaml)
+- Feeder attention: [source](https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/trunk/blueprints/automation/petsafe_freshfeed/feeder_attention.yaml) / [import](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fsudolulo%2Fpetsafe-freshfeed%2Ftrunk%2Fblueprints%2Fautomation%2Fpetsafe_freshfeed%2Ffeeder_attention.yaml)
+- Refill/cleaning: [source](https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/trunk/blueprints/automation/petsafe_freshfeed/refill_cleaning_reminder.yaml) / [import](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fsudolulo%2Fpetsafe-freshfeed%2Ftrunk%2Fblueprints%2Fautomation%2Fpetsafe_freshfeed%2Frefill_cleaning_reminder.yaml)
 
-## Development
-
-Tests, the browser harness, distribution builds, protocol notes and separately
-authorized maintainer procedures are in [docs/DEVELOPMENT.md](https://git.arch.fyi/flan/pet-feeder-card/src/branch/main/docs/DEVELOPMENT.md).
-Run `npm test` and the Python suites described there; nothing in this README contacts a
-live Home Assistant. Canonical development: https://git.arch.fyi/flan/pet-feeder-card.
-Integration issues: https://github.com/sudolulo/petsafe-freshfeed/issues. MIT licensed;
+The optional [Pet Feeder Card](https://github.com/sudolulo/pet-feeder-card) is a separate
+distribution. Issues: https://github.com/sudolulo/petsafe-freshfeed/issues. MIT licensed;
 see [LICENSE](LICENSE) and [NOTICE](NOTICE).

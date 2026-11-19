@@ -8,7 +8,7 @@ from urllib.parse import quote
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / 'custom_components/petsafe_freshfeed'
 ROOT_README = 'README.md'
-INTEGRATION_README = 'distribution/README-integration.md'
+INTEGRATION_README = 'README.md'
 READMES = (ROOT_README, INTEGRATION_README)
 BLUEPRINTS = sorted(p.relative_to(ROOT).as_posix()
                     for p in (ROOT / 'blueprints/automation/petsafe_freshfeed').glob('*.yaml'))
@@ -58,7 +58,6 @@ class PublicDocs051(unittest.TestCase):
             for value in ('0.5.1', '2026.10.0', 'tinytuya==1.20.0', 'protocol 3.5'):
                 self.assertIn(value, text, f'{path}: {value}')
             self.assertNotIn('0.5.0', text, path)
-        self.assertIn('0.4.1', read(ROOT_README))
 
     def test_grouped_entity_table_uses_translated_names(self):
         names = entity_names()
@@ -209,7 +208,7 @@ class PublicDocs051(unittest.TestCase):
         for path in READMES:
             text = read(path)
             for blueprint in BLUEPRINTS:
-                raw = 'https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/main/' + blueprint
+                raw = 'https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/trunk/' + blueprint
                 imp = ('https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url='
                        + quote(raw, safe=''))
                 self.assertEqual(text.count(raw), 1, f'{path}: {raw}')

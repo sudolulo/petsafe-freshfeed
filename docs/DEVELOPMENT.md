@@ -71,18 +71,6 @@ The historical device identifier namespace `tuya_local` remains identity data, n
 
 Only after a secret backup and confirmed owned setup, the release owner may optionally remove specific obsolete `.storage/petsafe_freshfeed_migrations/*.json` journal files manually. Runtime ignores them; this is not a prerequisite. For rollback, stop the integration and restore prior integration files and, only if needed, the matching secret backup. Older releases may consult those journals. Never replay commands or reset retained intent.
 
-### Card deployment and resource procedure
-
-**Separate authorization is required** for every live deployment, resource update or dashboard change. These are maintainer instructions, not evidence that any operation was performed. First run `npm install --no-fund --no-audit`, `npm test` and `npm run shoot` locally. Before a live change, back up the current modules and dashboard YAML; inspect the actual card slots, existing resource ID, URL and cache-buster. `deploy/cards.json` is demo data, not a live backup or binding inventory.
-
-Deploy all four sibling files together: `card/pet-feeder-card.js`, `card/freshfeed-model.js`, `card/pet-feeder-card-editor.js` and `card/freshfeed-editor-model.js`. Stage each file under a temporary name in the verified HA `/config/www/pet-feeder-card/` directory, then replace the corresponding module. Verify sibling import query versions whenever a module changes: changing only the Lovelace resource cache-buster does not invalidate imports. Update only the verified existing resource URL's cache-buster, then refresh the browser; a Home Assistant core restart is not needed. `tools/cmds/update-resource.json` contains a fixed resource ID and version: inspect and deliberately adjust it to match the verified live resource before using `tools/with-ha-token.sh node tools/ha-ws.mjs tools/cmds/update-resource.json`. The token helper obtains credentials at runtime; never save a token in a file or command.
-
-### Parity binding and demo screenshots
-
-`deploy/freshfeed-live-card.json` is a sanitized parity template, not a deployable backup. For a separately authorized deployment, privately replace `REPLACE_WITH_INTEGRATION_ENTRY_ID` with the existing integration entry ID; the card rejects the sentinel. Inspect and preserve the actual card positions, raw entity IDs and Aqara configuration; the former recorded positions `/views/1/sections/1/cards/0` and `/views/9/cards/2` are hints to verify, not authority to overwrite. Its Feed, Defrost and Refilled actions use `petsafe_freshfeed.command`; schedule and recovery use guarded integration services. Generic user-authored raw service calls are not intercepted.
-
-`npm run shoot` uses the local mock harness and writes screenshots under `harness/out/`; its parity output uses a unique directory and preserves existing output. It is software evidence, not live or physical-device verification. For a separately authorized dedicated demo dashboard only, inspect `deploy/cards.json` and start with `tools/with-ha-token.sh node tools/add-cards.mjs deploy/cards.json --dry-run`. Even dry-run writes `deploy/lovelace-before.json`, a private HA configuration snapshot: protect it and never commit it. The non-dry-run command replaces matching cards by model and can overwrite a converted raw card; never use it to upgrade a live FreshFeed dashboard. `tools/with-ha-token.sh node tools/shoot-live.mjs` is interactive and presses Feed: do not run it against converted live cards. Restore demo configuration only deliberately and under the same separate authorization.
-
 ## Task 10 integrated cloud verification (offline)
 
 ### Final integrated review (Tasks 6-9, schedule hook, card gate correction)
@@ -138,7 +126,8 @@ fixture skip remain; no new skips. All five commands below passed with the
 three prescribed pins, without disabling logging:
 
 ```bash
-export PETSAFE_PINNED_TUYA_LOCAL=~/.local/share/petsafe-validation/local-validation-snapshot/tuya-local/custom_components/tuya_local PETSAFE_PINNED_TINYTUYA_SITE=~/.local/share/petsafe-validation/venv/lib/python3.13/site-packages PETSAFE_ACCOUNT_HARNESS=~/.cache/petsafe/account-harness
+# Set PETSAFE_PINNED_TUYA_LOCAL, PETSAFE_PINNED_TINYTUYA_SITE and
+# PETSAFE_ACCOUNT_HARNESS to your local test dependency paths as needed.
 python3 -m unittest discover -s test_backend -q
 python3 -m pytest test_ha -q --asyncio-mode=auto -p no:cacheprovider
 npm test

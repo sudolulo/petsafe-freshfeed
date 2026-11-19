@@ -11,7 +11,7 @@ blueprint:
   domain: automation
   homeassistant:
     min_version: '2026.10.0'
-  source_url: https://github.com/sudolulo/petsafe-freshfeed/blob/main/blueprints/automation/petsafe_freshfeed/refill_cleaning_reminder.yaml
+  source_url: https://github.com/sudolulo/petsafe-freshfeed/blob/trunk/blueprints/automation/petsafe_freshfeed/refill_cleaning_reminder.yaml
   input:
     feeding_event:
       name: Feeding event

@@ -7,7 +7,7 @@ blueprint:
   domain: automation
   homeassistant:
     min_version: '2026.10.0'
-  source_url: https://github.com/sudolulo/petsafe-freshfeed/blob/main/blueprints/automation/petsafe_freshfeed/low_estimated_meals.yaml
+  source_url: https://github.com/sudolulo/petsafe-freshfeed/blob/trunk/blueprints/automation/petsafe_freshfeed/low_estimated_meals.yaml
   input:
     meals_entity:
       name: Estimated meals remaining

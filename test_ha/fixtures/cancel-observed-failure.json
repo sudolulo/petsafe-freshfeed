@@ -1,0 +1,21 @@
+{
+  "state": "idle",
+  "attributes": {
+    "can_cancel": false,
+    "cancel_reason": "cancel_not_pending",
+    "can_feed": true,
+    "can_defrost": true,
+    "can_refilled": false,
+    "blocked_reason": "already_refilled",
+    "operation_id": null,
+    "operation": null,
+    "session_id": "session",
+    "reason": "observed_failure",
+    "storage_fault": false,
+    "integrity_fault": false,
+    "recovery_can_start": false,
+    "recovery_phase": "idle",
+    "recovery_resolution": null,
+    "observed_failure": {"operation_id": "cancel-op", "operation": "cancel", "session_id": "session"}
+  }
+}

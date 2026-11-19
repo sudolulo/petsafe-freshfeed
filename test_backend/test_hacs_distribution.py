@@ -57,7 +57,6 @@ BLUEPRINTS = {f'blueprints/automation/petsafe_freshfeed/{name}.yaml' for name in
     'low_estimated_meals', 'feeder_attention', 'refill_cleaning_reminder')}
 EXPECTED = {
     'petsafe-freshfeed': COMMON | {COMPONENT + n for n in RUNTIME} | {COMPONENT + 'brand/icon.png'} | BLUEPRINTS,
-    'pet-feeder-card': COMMON | {'dist/pet-feeder-card.js', 'dist/freshfeed-model.js', 'dist/pet-feeder-card-editor.js', 'dist/freshfeed-editor-model.js'},
 }
 spec = importlib.util.spec_from_file_location('build_hacs', SCRIPT)
 exporter = importlib.util.module_from_spec(spec)
@@ -114,7 +113,7 @@ class DistributionTest(unittest.TestCase):
         return out
 
     def test_exact_paths_hashes_and_immutable_reproducibility(self):
-        sources = set(exporter.INTEGRATION.values()) | set(exporter.CARD.values())
+        sources = set(exporter.INTEGRATION.values())
         before = {s: (ROOT / s).read_bytes() for s in sources if (ROOT / s).exists()}
         a, b = self.good_build('a'), self.good_build('b')
         self.assertEqual(contents(a), contents(b))
@@ -126,13 +125,6 @@ class DistributionTest(unittest.TestCase):
             f'{hashlib.sha256(files[p]).hexdigest()}  {p}\n' for p in sorted(expected)))
         for tree in EXPECTED:
             self.assertNotIn(b'holden@', (a / tree / 'NOTICE').read_bytes())
-
-    def test_card_sibling_module_imports_resolve(self):
-        import re
-        out = self.good_build() / 'pet-feeder-card' / 'dist'
-        for module in out.glob('*.js'):
-            for sibling in re.findall(r"['\"](\./[^'\"]+\.js)(?:\?[^'\"]*)?['\"]", module.read_text()):
-                self.assertTrue((module.parent / sibling).is_file(), f'{module.name}: {sibling}')
 
     def test_notice_attributes_tuya_mobile_with_full_mit_text(self):
         out = self.good_build()
@@ -178,57 +170,26 @@ class DistributionTest(unittest.TestCase):
         self.assertNotIn('after_dependencies', manifest)
         self.assertNotIn('dependencies', manifest)
         self.assertEqual(manifest['requirements'], ['tinytuya==1.20.0'])
-        package = json.loads((ROOT / 'package.json').read_text())
-        self.assertEqual(package['version'], '0.4.1')
-        lock = json.loads((ROOT / 'package-lock.json').read_text())
-        self.assertEqual(lock['version'], '0.4.1')
-        self.assertEqual(lock['packages']['']['version'], '0.4.1')
-        self.assertIn('0.4.1', (ROOT / 'distribution/README-card.md').read_text())
         changelog = (ROOT / 'CHANGELOG.md').read_text()
         self.assertIn('## Integration [0.5.0] - 2026-11-18', changelog)
-        self.assertIn('## Card [0.4.0] - 2026-11-18', changelog)
         self.assertIn('## Integration [0.4.0] - 2026-11-18', changelog)
         self.assertLess(changelog.index('## Integration [0.4.0]'),
                         changelog.index('## Integration [0.3.0]'))
 
     def test_early_compatibility_and_safety_contract(self):
-        for path in ('README.md', 'distribution/README-integration.md'):
+        for path in ('README.md',):
             text = (ROOT / path).read_text()
             for value in ('0.5.1', '2026.10.0', '1.20.0', '3.5'):
                 self.assertIn(value, text, f'{path}: {value}')
             for value in ('administrator', 'offline', 'advisory'):
                 self.assertIn(value, text.lower(), f'{path}: {value}')
 
-    def test_release_documentation_examples_and_install_closure(self):
-        readme = (ROOT / 'README.md').read_text()
-        self.assertNotIn('scp ', readme)
-        spec_text = (ROOT / 'docs/card-spec.md').read_text()
-        self.assertNotIn('No visual editor.', spec_text)
-        self.assertNotIn('One deployable ES module:', spec_text)
-        for phrase in ('0.4.0', 'getConfigElement', 'advisory', 'Estimated', 'aria-modal'):
-            self.assertIn(phrase, spec_text)
-        text = (ROOT / 'distribution/README-card.md').read_text()
-        examples = [yaml.safe_load(block) for block in re.findall(r'```yaml\n(.*?)```', text, re.S)]
-        semantic = [example for example in examples if 'freshfeed' in example]
-        self.assertEqual(len(semantic), 1)
-        config = semantic[0]
-        self.assertEqual(set(config['freshfeed']), {'entry_id', 'schedule_entity',
-                         'write_status_entity', 'quick_feed_entity', 'history_entity'})
-        self.assertTrue(config['entities'])
-        self.assertFalse(config.get('actions'))
-        config['freshfeed']['entry_id'] = 'synthetic_release_entry_42'
-        result = subprocess.run(['node', '--input-type=module', '-e',
-            "import {validateConfig} from './card/pet-feeder-card.js'; "
-            "validateConfig(JSON.parse(process.argv[1]));", json.dumps(config)],
-            cwd=ROOT, capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-
     def test_blueprint_documentation_has_full_source_and_import_urls(self):
         from urllib.parse import quote
-        for path in ('README.md', 'distribution/README-integration.md'):
+        for path in ('README.md',):
             text = (ROOT / path).read_text()
             for blueprint in BLUEPRINTS:
-                raw = 'https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/main/' + blueprint
+                raw = 'https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/trunk/' + blueprint
                 self.assertIn(raw, text, path)
                 self.assertIn('https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=' + quote(raw, safe=''), text, path)
             for phrase in ('does not automatically install', 'unsaved increments', 'administrator', 'without backfill'):
@@ -274,20 +235,19 @@ class DistributionTest(unittest.TestCase):
                     exporter.source_bytes(name)
             with self.assertRaises(ValueError):
                 exporter.source_bytes('../outside')
-        approved = set(exporter.INTEGRATION.values()) | set(exporter.CARD.values())
+        approved = set(exporter.INTEGRATION.values())
         for forbidden in ('private.txt', 'deploy/cards.json', 'docs/whisker-reference.png', '.git/config', 'custom_components/petsafe_freshfeed/unknown.py'):
             self.assertNotIn(forbidden, approved)
 
     def test_exact_source_inputs_without_raw_profile(self):
         self.assertFalse((ROOT / PROFILE_SRC).exists())
         self.assertEqual(set(exporter.INTEGRATION.values()),
-                         {'LICENSE', 'distribution/NOTICE-public', 'assets/brand/logo.svg', 'assets/brand/readme.png', 'assets/brand/icon.png', 'distribution/README-integration.md', 'distribution/hacs-integration.json', 'distribution/workflow-integration.yml'}
+                         {'LICENSE', 'NOTICE', 'assets/brand/logo.svg', 'assets/brand/readme.png', 'assets/brand/icon.png', 'README.md', 'hacs.json', '.github/workflows/validate.yml'}
                          | {COMPONENT + n for n in RUNTIME} | BLUEPRINTS)
 
     def test_manifests_png_and_import_closure(self):
         out = self.good_build()
         integration = out / 'petsafe-freshfeed'
-        card = out / 'pet-feeder-card'
         manifest = json.loads((integration / COMPONENT / 'manifest.json').read_text())
         self.assertEqual(manifest['domain'], 'petsafe_freshfeed')
         self.assertEqual(manifest['version'], '0.5.1')
@@ -295,21 +255,12 @@ class DistributionTest(unittest.TestCase):
         self.assertNotIn('tuya_local', manifest.get('dependencies', []))
         self.assertEqual(manifest['codeowners'], ['@sudolulo'])
         self.assertEqual(manifest['issue_tracker'], 'https://github.com/sudolulo/petsafe-freshfeed/issues')
-        hc = json.loads((card / 'hacs.json').read_text())
-        self.assertEqual(hc['filename'], 'pet-feeder-card.js')
-        self.assertFalse(hc.get('zip_release', False))
-        self.assertFalse(hc.get('content_in_root', False))
         self.assertNotIn('filename', json.loads((integration / 'hacs.json').read_text()))
         for name, size in ((COMPONENT + 'brand/icon.png', (256, 256)), ('assets/brand/readme.png', (512, 512))):
             png = (integration / name).read_bytes()
             self.assertEqual(png[:8], b'\x89PNG\r\n\x1a\n')
             self.assertEqual(struct.unpack('>II', png[16:24]), size)
             self.assertEqual(png[25], 6)  # RGBA, transparent background
-        for js in (card / 'dist').glob('*.js'):
-            for dependency in re.findall(r'(?:from\s*|import\s*)[\'"]([^\'"]+)[\'"]', js.read_text()):
-                self.assertTrue(dependency.startswith('./'), dependency)
-                self.assertTrue((js.parent / dependency.split('?')[0]).is_file(), dependency)
-
     def test_runtime_python_import_closure(self):
         """Every intra-package import of a shipped module is itself shipped."""
         import ast

@@ -11,27 +11,12 @@
 - Add on-demand read-only cloud data and Fully local mode. Fresh local evidence can permit controls when quick-feed state was never reported, with residual risk of an extra meal.
 - Correct standalone documentation and empty-feeder recovery.
 
-## Card [0.4.1] - 2026-11-19
-
-### Fixed
-- Release a matching operation/session latch after local abandonment and show execution unknown. The 0.5.0 backend retains the strict fallback.
-- Unknown quick-feed state no longer blocks Feed or Defrost on its own; the integration's admission decides, and active or pending states still block.
-
-### Added
-- Opening the schedule dialog requests a schedule refresh, with a retry button while the schedule is unknown.
-
 ## Integration [0.5.0] - 2026-11-18
 
 ### Added
 - Privacy-limited diagnostics, non-mutating Repairs, observed feeding device triggers,
   best-effort observed-meal statistics and three importable notification blueprints.
 - Translated entity names and errors without changing existing identities.
-
-## Card [0.4.0] - 2026-11-18
-
-### Added
-- Lazy visual editor with manual configuration fallback, accessible dialogs, friendly
-  history and errors, and a five-minute advisory for schedule edits.
 
 ## Integration [0.4.0] - 2026-11-18
 
