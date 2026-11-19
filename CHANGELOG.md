@@ -4,6 +4,7 @@
 
 ### Removed
 - Retired the borrowed backend, setup and migration, its dependency and raw profile.
+- Breaking: entries still using the borrowed backend no longer load. Migrate with 0.5.0 before upgrading.
 
 ### Fixed
 - Preserve owned identities and storage while offering app-free recovery. Local abandonment clears uncertainty without proving execution; strict recovery remains separate.
