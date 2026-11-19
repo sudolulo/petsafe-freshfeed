@@ -7,22 +7,18 @@ import os
 import re
 import stat
 import sys
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = 'custom_components/petsafe_freshfeed/'
 RUNTIME = '''__init__.py cloud_read.py binary_sensor.py config_flow.py const.py critical_transport.py entity.py event.py hub.py lifecycle.py observed.py quick_feed.py schedule_codec.py schedule_state.py sensor.py services.py sqlite_witness.py store_bootstrap.py write_adapter.py manifest.json strings.json services.yaml translations/en.json account/__init__.py account/boundary.py account/client.py account/profile.py account/exchange.py account/protocol_contract.json lan_locate.py source_lookup.py local_source.py owned_source.py owned_compat.py owned_fingerprints.json switch.py number.py owned_setting.py diagnostics.py repairs.py device_trigger.py'''.split()
-COMMON = {'LICENSE': 'LICENSE', 'NOTICE': 'NOTICE', 'assets/brand/logo.svg': 'assets/brand/logo.svg', 'assets/brand/readme.png': 'assets/brand/readme.png'}
-BLUEPRINTS = (
-    'blueprints/automation/petsafe_freshfeed/low_estimated_meals.yaml',
-    'blueprints/automation/petsafe_freshfeed/feeder_attention.yaml',
-    'blueprints/automation/petsafe_freshfeed/refill_cleaning_reminder.yaml',
-)
-INTEGRATION = {**{path: path for path in BLUEPRINTS}, **COMMON, **{COMPONENT + n: COMPONENT + n for n in RUNTIME}, COMPONENT + 'brand/icon.png': 'assets/brand/icon.png', 'README.md': 'README.md', 'hacs.json': 'hacs.json', '.github/workflows/validate.yml': '.github/workflows/validate.yml'}
+INTEGRATION = {**{n: COMPONENT + n for n in RUNTIME}, 'brand/icon.png': 'assets/brand/icon.png'}
+ZIP_NAME = 'petsafe_freshfeed.zip'
 
 # App profile (plan Global Constraints): written only into the build output,
 # never into the source checkout. Values are never printed; messages name keys only.
-APP_PROFILE_DEST = 'petsafe-freshfeed/' + COMPONENT + 'account/app_profile.json'
+APP_PROFILE_DEST = 'account/app_profile.json'
 PROFILE_INPUTS = (
     ('public-apk-profile.private.json', ('app_id', 'app_secret', 'cert_sha256_hex', 'app_key', 'package')),
     ('public-apk-envelope.private.json', ('app_version', 'ttid', 'sdk_version', 'device_core_version')),
@@ -134,10 +130,21 @@ def source_bytes(name):
         raise ValueError(f'missing source: {p}')
     return p.read_bytes()
 
+def release_manifest(tree_manifest):
+    """Render metadata for a release-preparation commit, never mutate trunk.
+
+    Tag the preparation commit, then restore the original tree manifest in a
+    forward commit before publishing trunk. Release artifacts belong to tags.
+    """
+    manifest = json.loads(tree_manifest)
+    manifest.update(zip_release=True, filename=ZIP_NAME)
+    return (json.dumps(manifest, indent=2) + '\n').encode('utf-8')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--profile-dir', type=Path, help='directory holding the two private app profile files')
+    parser.add_argument('--profile-dir', type=Path, help='directory holding the two app profile input files (values embedded in the public app; never committed)')
     parser.add_argument('--release', action='store_true', help='public release build; requires --profile-dir')
     args = parser.parse_args()
     if args.release and args.profile_dir is None:
@@ -152,8 +159,7 @@ def main():
     for parent in [out, *out.parents]:
         if parent.is_symlink():
             parser.error('symlink output path forbidden')
-    trees = {'petsafe-freshfeed': INTEGRATION}
-    files = {f'{tree}/{dest}': source_bytes(src) for tree, mapping in trees.items() for dest, src in mapping.items()}
+    files = {dest: source_bytes(src) for dest, src in INTEGRATION.items()}
     profile_keys = None
     if args.profile_dir is not None:
         try:
@@ -161,17 +167,28 @@ def main():
         except ProfileError as error:
             print(f'profile error: {error}', file=sys.stderr)
             sys.exit(1)
-    out.mkdir(parents=True, exist_ok=True)
-    for name, data in sorted(files.items()):
-        target = out / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
-    (out / 'SHA256SUMS').write_text(''.join(f'{hashlib.sha256(data).hexdigest()}  {name}\n' for name, data in sorted(files.items())), encoding='utf-8')
+    # No staging or temporary directory: validated inputs go directly into ZIP.
+    # Refuse a missing output parent rather than creating paths outside output.
+    out.mkdir(mode=0o700, exist_ok=True)
+    out.chmod(0o700)
+    archive_path = out / ZIP_NAME
+    with os.fdopen(os.open(archive_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), 'wb') as stream:
+        with zipfile.ZipFile(stream, 'w', compression=zipfile.ZIP_STORED) as archive:
+            for name, data in sorted(files.items()):
+                entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                entry.create_system = 3
+                entry.external_attr = (stat.S_IFREG | 0o644) << 16
+                archive.writestr(entry, data)
+    archive_path.chmod(0o600)
+    digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    with os.fdopen(os.open(out / 'SHA256SUMS', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), 'w', encoding='ascii') as stream:
+        stream.write(f'{digest}  {ZIP_NAME}\n')
+    (out / 'SHA256SUMS').chmod(0o600)
     if profile_keys is None:
         print('account sign-in disabled: no app profile')
     else:
         print(f'app profile keys: {", ".join(profile_keys)}')
-        print(f'app profile written: {out / APP_PROFILE_DEST}')
+        print(f'app profile written: ZIP member {APP_PROFILE_DEST} in {out / ZIP_NAME}')
 
 if __name__ == '__main__':
     main()

@@ -4,7 +4,7 @@ Ported from the private harness ``live_profile.py``
 (2026-11-17), which passed a real read-only login and discovery. Changes
 from the harness: the nine app profile values come from one bundled file,
 ``account/app_profile.json``, written only into a built package by
-``tools/build-hacs.py`` (never present in the source repository); the file
+``tools/build-release.py`` (never present in the source repository); the file
 is not required to be owner-only (the values are public APK values, the
 same for every user, plan Decision record); ``cert_sha256_hex`` must be 64
 lowercase hex; and the loaded ``AppProfile`` holds no session: each

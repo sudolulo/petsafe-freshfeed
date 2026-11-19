@@ -1,4 +1,9 @@
 """Public packaging contract: exact paths, immutable inputs, and fail-closed IO."""
+import builtins
+import contextlib
+import io
+import os
+import zipfile
 import hashlib
 import importlib.util
 import json
@@ -17,7 +22,7 @@ except ImportError:
     yaml = None
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / 'tools/build-hacs.py'
+SCRIPT = ROOT / 'tools/build-release.py'
 COMPONENT = 'custom_components/petsafe_freshfeed/'
 RUNTIME = '''__init__.py cloud_read.py binary_sensor.py config_flow.py const.py critical_transport.py entity.py event.py hub.py lifecycle.py observed.py quick_feed.py schedule_codec.py schedule_state.py sensor.py services.py sqlite_witness.py store_bootstrap.py write_adapter.py manifest.json strings.json services.yaml translations/en.json'''.split()
 ACCOUNT = '''account/__init__.py account/boundary.py account/client.py account/profile.py account/exchange.py account/protocol_contract.json lan_locate.py source_lookup.py'''.split()
@@ -29,7 +34,7 @@ OWNED_SOURCE = '''local_source.py owned_source.py owned_compat.py owned_fingerpr
 SETTINGS = '''switch.py number.py owned_setting.py'''.split()
 RUNTIME = RUNTIME + ACCOUNT + OWNED_SOURCE + SETTINGS + ['diagnostics.py', 'repairs.py', 'device_trigger.py']
 APP_PROFILE = COMPONENT + 'account/app_profile.json'
-APP_PROFILE_DEST = 'petsafe-freshfeed/' + APP_PROFILE
+APP_PROFILE_DEST = 'account/app_profile.json'
 PROFILE_FILE = 'public-apk-profile.private.json'
 ENVELOPE_FILE = 'public-apk-envelope.private.json'
 PROFILE_KEYS = ('app_id', 'app_secret', 'cert_sha256_hex', 'app_key', 'package')
@@ -55,16 +60,19 @@ PROFILE_SRC = 'config/tuya_local/petsafe_freshfeed_raw.yaml'
 PROFILE_DEST = 'petsafe-freshfeed/examples/tuya_local/petsafe_freshfeed_raw.yaml'
 BLUEPRINTS = {f'blueprints/automation/petsafe_freshfeed/{name}.yaml' for name in (
     'low_estimated_meals', 'feeder_attention', 'refill_cleaning_reminder')}
-EXPECTED = {
-    'petsafe-freshfeed': COMMON | {COMPONENT + n for n in RUNTIME} | {COMPONENT + 'brand/icon.png'} | BLUEPRINTS,
-}
+EXPECTED = set(RUNTIME) | {'brand/icon.png'}
 spec = importlib.util.spec_from_file_location('build_hacs', SCRIPT)
 exporter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(exporter)
 
 
 def contents(path):
-    return {str(p.relative_to(path)): p.read_bytes() for p in path.rglob('*') if p.is_file()}
+    with zipfile.ZipFile(path / 'petsafe_freshfeed.zip') as archive:
+        return {name: archive.read(name) for name in archive.namelist()}
+
+
+def artifact_contents(path):
+    return {p.name: p.read_bytes() for p in path.iterdir() if p.is_file()}
 
 
 class DistributionTest(unittest.TestCase):
@@ -81,7 +89,7 @@ class DistributionTest(unittest.TestCase):
 
     def profile_dir(self, profile=None, envelope=None, *, raw_profile=None, raw_envelope=None, mode=0o600):
         # Synthetic directory in the system temp dir; never a real private directory.
-        temp = tempfile.TemporaryDirectory(prefix='petsafe-synth-profile-')
+        temp = tempfile.TemporaryDirectory(prefix='petsafe-synth-profile-', dir=self.base)
         self.addCleanup(temp.cleanup)
         d = Path(temp.name)
         for name, doc, raw in ((PROFILE_FILE, FAKE_PROFILE if profile is None else profile, raw_profile),
@@ -99,11 +107,8 @@ class DistributionTest(unittest.TestCase):
                 self.assertNotIn(value, stream)
 
     def test_blueprint_exports_are_byte_identical_root_files(self):
-        out = self.good_build()
         for path in BLUEPRINTS:
-            self.assertEqual((out / 'petsafe-freshfeed' / path).read_bytes(),
-                             (ROOT / path).read_bytes())
-            self.assertEqual(exporter.INTEGRATION[path], path)
+            self.assertTrue((ROOT / path).is_file())
             self.assertNotIn(path, exporter.RUNTIME)
 
     def good_build(self, name='export'):
@@ -118,24 +123,13 @@ class DistributionTest(unittest.TestCase):
         a, b = self.good_build('a'), self.good_build('b')
         self.assertEqual(contents(a), contents(b))
         self.assertEqual(before, {s: (ROOT / s).read_bytes() for s in before})
-        expected = {f'{tree}/{p}' for tree, paths in EXPECTED.items() for p in paths}
-        files = contents(a)
-        self.assertEqual(set(files), expected | {'SHA256SUMS'})
-        self.assertEqual(files['SHA256SUMS'].decode(), ''.join(
-            f'{hashlib.sha256(files[p]).hexdigest()}  {p}\n' for p in sorted(expected)))
-        for tree in EXPECTED:
-            self.assertNotIn(b'holden@', (a / tree / 'NOTICE').read_bytes())
+        self.assertEqual(set(contents(a)), EXPECTED)
+        files = artifact_contents(a)
+        self.assertEqual(set(files), {'petsafe_freshfeed.zip', 'SHA256SUMS'})
+        self.assertEqual(files['SHA256SUMS'].decode(),
+                         hashlib.sha256(files['petsafe_freshfeed.zip']).hexdigest() + '  petsafe_freshfeed.zip\n')
 
     def test_notice_attributes_tuya_mobile_with_full_mit_text(self):
-        out = self.good_build()
-        for tree in EXPECTED:
-            notice = (out / tree / 'NOTICE').read_text()
-            for required in ('abovecolin/tuya-mobile',
-                             'ade70eff248764757aa177acf9bdd10440ae7394',
-                             'Copyright (c) 2026 tuya-mobile contributors',
-                             'Permission is hereby granted'):
-                self.assertIn(required, notice, f'{tree} NOTICE missing: {required}')
-            self.assertNotIn('holden@', notice)
         root_notice = (ROOT / 'NOTICE').read_text()
         for required in ('abovecolin/tuya-mobile', 'ade70eff248764757aa177acf9bdd10440ae7394',
                          'Permission is hereby granted'):
@@ -143,14 +137,14 @@ class DistributionTest(unittest.TestCase):
 
     def test_retired_runtime_and_raw_profile_not_exported(self):
         out = self.good_build()
-        self.assertFalse((out / PROFILE_DEST).exists())
+        self.assertNotIn(PROFILE_DEST, contents(out))
         retired = {'tuya_bridge.py', 'tuya_compat.py', 'source_binding.py',
                    'tuya_fingerprints.json', 'migration.py', 'migration_state.py',
                    'migration_journal.py', 'petsafe_freshfeed_raw.yaml'}
-        self.assertFalse(retired & {p.name for p in out.rglob('*')})
+        self.assertFalse(retired & {Path(name).name for name in contents(out)})
 
     def test_integration_readme_documents_pinned_compatibility(self):
-        readme = (self.good_build() / 'petsafe-freshfeed/README.md').read_text()
+        readme = (ROOT / 'README.md').read_text()
         for required in (
             '2026.10.0',
             '1.20.0',
@@ -160,12 +154,11 @@ class DistributionTest(unittest.TestCase):
     def test_release_051_041_metadata(self):
         """Release versions retain the pinned compatibility contract."""
         out = self.good_build()
-        integration = out / 'petsafe-freshfeed'
-        hacs = json.loads((integration / 'hacs.json').read_text())
+        hacs = json.loads((ROOT / 'hacs.json').read_text())
         self.assertEqual(hacs['homeassistant'], '2026.10.0')
         self.assertEqual(hacs['name'], 'PetSafe FreshFeed')
         self.assertFalse(hacs.get('content_in_root', False))
-        manifest = json.loads((integration / COMPONENT / 'manifest.json').read_text())
+        manifest = json.loads(contents(out)['manifest.json'])
         self.assertEqual(manifest['version'], '0.5.1')
         self.assertNotIn('after_dependencies', manifest)
         self.assertNotIn('dependencies', manifest)
@@ -196,7 +189,7 @@ class DistributionTest(unittest.TestCase):
                 self.assertIn(phrase, text, path)
 
     def test_readmes_document_standalone(self):
-        built = (self.good_build() / 'petsafe-freshfeed/README.md').read_text()
+        built = (ROOT / 'README.md').read_text()
         root = (ROOT / 'README.md').read_text()
         for name, text in (('distribution', built), ('root', root)):
             readme = ' '.join(text.split())
@@ -242,22 +235,20 @@ class DistributionTest(unittest.TestCase):
     def test_exact_source_inputs_without_raw_profile(self):
         self.assertFalse((ROOT / PROFILE_SRC).exists())
         self.assertEqual(set(exporter.INTEGRATION.values()),
-                         {'LICENSE', 'NOTICE', 'assets/brand/logo.svg', 'assets/brand/readme.png', 'assets/brand/icon.png', 'README.md', 'hacs.json', '.github/workflows/validate.yml'}
-                         | {COMPONENT + n for n in RUNTIME} | BLUEPRINTS)
+                         {COMPONENT + n for n in RUNTIME} | {'assets/brand/icon.png'})
 
     def test_manifests_png_and_import_closure(self):
         out = self.good_build()
-        integration = out / 'petsafe-freshfeed'
-        manifest = json.loads((integration / COMPONENT / 'manifest.json').read_text())
+        manifest = json.loads(contents(out)['manifest.json'])
         self.assertEqual(manifest['domain'], 'petsafe_freshfeed')
         self.assertEqual(manifest['version'], '0.5.1')
         self.assertNotIn('after_dependencies', manifest)
         self.assertNotIn('tuya_local', manifest.get('dependencies', []))
         self.assertEqual(manifest['codeowners'], ['@sudolulo'])
         self.assertEqual(manifest['issue_tracker'], 'https://github.com/sudolulo/petsafe-freshfeed/issues')
-        self.assertNotIn('filename', json.loads((integration / 'hacs.json').read_text()))
+        self.assertNotIn('filename', json.loads((ROOT / 'hacs.json').read_text()))
         for name, size in ((COMPONENT + 'brand/icon.png', (256, 256)), ('assets/brand/readme.png', (512, 512))):
-            png = (integration / name).read_bytes()
+            png = contents(out)['brand/icon.png'] if name.startswith(COMPONENT) else (ROOT / name).read_bytes()
             self.assertEqual(png[:8], b'\x89PNG\r\n\x1a\n')
             self.assertEqual(struct.unpack('>II', png[16:24]), size)
             self.assertEqual(png[25], 6)  # RGBA, transparent background
@@ -287,7 +278,7 @@ class DistributionTest(unittest.TestCase):
         self.assertEqual(manifest['requirements'], ['tinytuya==1.20.0'])
         files = contents(self.good_build())
         for name in OWNED_SOURCE:
-            self.assertEqual(files['petsafe-freshfeed/' + COMPONENT + name], (ROOT / COMPONENT / name).read_bytes(), name)
+            self.assertEqual(files[name], (ROOT / COMPONENT / name).read_bytes(), name)
 
     def test_runtime_includes_account_modules_and_profile_export(self):
         self.assertEqual(exporter.RUNTIME, RUNTIME)
@@ -296,7 +287,8 @@ class DistributionTest(unittest.TestCase):
         self.assertNotIn('account/app_profile.json', exporter.RUNTIME)
         files = contents(self.good_build())
         for name in ACCOUNT:
-            self.assertEqual(files['petsafe-freshfeed/' + COMPONENT + name], (ROOT / COMPONENT / name).read_bytes(), name)
+            self.assertEqual(files[name], (ROOT / COMPONENT / name).read_bytes(), name)
+        self.assertNotIn(APP_PROFILE_DEST, files)
         self.assertNotIn(PROFILE_DEST, files)
 
     def test_tuya_local_assist_not_shipped(self):
@@ -304,7 +296,7 @@ class DistributionTest(unittest.TestCase):
             self.assertNotIn(name, exporter.RUNTIME)
         files = contents(self.good_build())
         for name in NOT_SHIPPED:
-            self.assertNotIn('petsafe-freshfeed/' + COMPONENT + name, files)
+            self.assertNotIn(name, files)
         self.assertNotIn('tuya_local_assist', (ROOT / COMPONENT / 'config_flow.py').read_text())
         for name in NOT_SHIPPED:
             self.assertFalse((ROOT / COMPONENT / name).exists(), name)
@@ -316,11 +308,11 @@ class DistributionTest(unittest.TestCase):
         out = self.base / 'with-profile'
         result = self.build(out, '--profile-dir', self.profile_dir())
         self.assertEqual(result.returncode, 0, result.stderr)
-        written = out / APP_PROFILE_DEST
-        self.assertTrue(written.is_file())
-        document = json.loads(written.read_text())
+        document = json.loads(contents(out)[APP_PROFILE_DEST])
         self.assertEqual(document, {**FAKE_PROFILE, **FAKE_ENVELOPE})
         self.assertEqual(list(document), list(PROFILE_KEYS + ENVELOPE_KEYS))
+        written = self.base / 'loaded-profile.json'
+        written.write_bytes(contents(out)[APP_PROFILE_DEST])
         if str(ROOT) not in sys.path:
             sys.path.insert(0, str(ROOT))
         from custom_components.petsafe_freshfeed.account import profile as account_profile
@@ -329,7 +321,7 @@ class DistributionTest(unittest.TestCase):
         self.assertEqual(loaded._mapping(), {**FAKE_PROFILE, **FAKE_ENVELOPE})
         for key in PROFILE_KEYS + ENVELOPE_KEYS:
             self.assertIn(key, result.stdout)
-        self.assertIn(str(written), result.stdout)
+        self.assertIn(APP_PROFILE_DEST, result.stdout)
         self.assertNotIn('account sign-in disabled', result.stdout)
         self.assertFalse((ROOT / APP_PROFILE).exists())
         # The release flag with a profile directory changes nothing else.
@@ -343,7 +335,7 @@ class DistributionTest(unittest.TestCase):
         result = self.build(out)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip().splitlines(), ['account sign-in disabled: no app profile'])
-        self.assertFalse((out / APP_PROFILE_DEST).exists())
+        self.assertNotIn(APP_PROFILE_DEST, contents(out))
         self.assertNotIn(APP_PROFILE_DEST, (out / 'SHA256SUMS').read_text())
 
     def test_release_requires_profile_dir(self):
@@ -352,6 +344,10 @@ class DistributionTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('--profile-dir', result.stderr)
         self.assertFalse(out.exists())
+        help_result = subprocess.run([sys.executable, str(SCRIPT), '--help'], capture_output=True, text=True)
+        self.assertEqual(help_result.returncode, 0)
+        self.assertNotIn('private', help_result.stdout.lower())
+        self.assertIn('directory holding the two app profile input files (values embedded in the public app; never committed)', ' '.join(help_result.stdout.split()))
 
     def test_build_output_never_echoes_values(self):
         ok = self.build(self.base / 'ok', '--profile-dir', self.profile_dir())
@@ -416,11 +412,95 @@ class DistributionTest(unittest.TestCase):
         out = self.base / 'sums'
         result = self.build(out, '--profile-dir', self.profile_dir())
         self.assertEqual(result.returncode, 0, result.stderr)
-        expected = {f'{tree}/{p}' for tree, paths in EXPECTED.items() for p in paths} | {APP_PROFILE_DEST}
-        files = contents(out)
-        self.assertEqual(set(files), expected | {'SHA256SUMS'})
-        self.assertEqual(files['SHA256SUMS'].decode(), ''.join(
-            f'{hashlib.sha256(files[p]).hexdigest()}  {p}\n' for p in sorted(expected)))
+        self.assertEqual(set(contents(out)), EXPECTED | {APP_PROFILE_DEST})
+        files = artifact_contents(out)
+        self.assertEqual(set(files), {'petsafe_freshfeed.zip', 'SHA256SUMS'})
+        self.assertEqual(files['SHA256SUMS'].decode(), hashlib.sha256(files['petsafe_freshfeed.zip']).hexdigest() + '  petsafe_freshfeed.zip\n')
+
+    def test_release_preparation_zip_manifest(self):
+        before = (ROOT / 'hacs.json').read_bytes()
+        rendered = exporter.release_manifest(before)
+        manifest = json.loads(rendered)
+        self.assertEqual(manifest, {'name': 'PetSafe FreshFeed', 'content_in_root': False,
+                                   'homeassistant': '2026.10.0', 'zip_release': True,
+                                   'filename': 'petsafe_freshfeed.zip'})
+        preparation = self.base / 'tag-tree'
+        preparation.mkdir()
+        (preparation / 'hacs.json').write_bytes(rendered)
+        self.assertTrue(json.loads((preparation / 'hacs.json').read_bytes())['zip_release'])
+        self.assertEqual((ROOT / 'hacs.json').read_bytes(), before)
+        self.assertFalse(json.loads(before)['zip_release'])
+        self.assertNotIn('filename', json.loads(before))
+
+    def test_deterministic_zip_without_profile(self):
+        created = []
+        real_mkdir, real_open, real_io_open, real_builtin_open = os.mkdir, os.open, io.open, builtins.open
+        current = None
+
+        def record(path):
+            path = Path(path).absolute()
+            self.assertTrue(path == current or current in path.parents, str(path))
+            created.append(path)
+
+        def mkdir(path, *args, **kwargs):
+            record(path)
+            return real_mkdir(path, *args, **kwargs)
+
+        def os_open(path, flags, *args, **kwargs):
+            if flags & os.O_CREAT:
+                record(path)
+            return real_open(path, flags, *args, **kwargs)
+
+        def opener(original):
+            def wrapped(path, mode='r', *args, **kwargs):
+                if not isinstance(path, int) and any(flag in mode for flag in 'wax+'):
+                    record(path)
+                return original(path, mode, *args, **kwargs)
+            return wrapped
+
+        outputs = []
+        for name in ('zip-a', 'zip-b'):
+            current = self.base / name
+            with contextlib.ExitStack() as stack:
+                for function in ('mkdtemp', 'mkstemp', 'NamedTemporaryFile', 'TemporaryDirectory', 'gettempdir'):
+                    stack.enter_context(patch.object(tempfile, function, side_effect=AssertionError('tempfile forbidden')))
+                stack.enter_context(patch('os.mkdir', side_effect=mkdir))
+                stack.enter_context(patch('os.open', side_effect=os_open))
+                stack.enter_context(patch('io.open', side_effect=opener(real_io_open)))
+                stack.enter_context(patch('builtins.open', side_effect=opener(real_builtin_open)))
+                stack.enter_context(patch.object(sys, 'argv', [str(SCRIPT), '--output', str(current)]))
+                stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                previous_umask = os.umask(0o022)
+                try:
+                    exporter.main()
+                    actual_umask = os.umask(0o022)
+                    self.assertEqual(actual_umask, 0o022, 'builder must restore caller umask')
+                finally:
+                    os.umask(previous_umask)
+            self.assertEqual(current.stat().st_mode & 0o777, 0o700)
+            self.assertEqual({p.name for p in current.iterdir()}, {'petsafe_freshfeed.zip', 'SHA256SUMS'})
+            for path in current.iterdir():
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            outputs.append(artifact_contents(current))
+        self.assertTrue(created)
+        self.assertEqual(outputs[0], outputs[1])
+        with zipfile.ZipFile(current / 'petsafe_freshfeed.zip') as archive:
+            self.assertEqual(archive.namelist(), sorted(EXPECTED))
+            self.assertNotIn(APP_PROFILE_DEST, archive.namelist())
+            for entry in archive.infolist():
+                self.assertEqual(entry.date_time, (1980, 1, 1, 0, 0, 0))
+                self.assertEqual((entry.external_attr >> 16) & 0o777, 0o644)
+                source = 'assets/brand/icon.png' if entry.filename == 'brand/icon.png' else COMPONENT + entry.filename
+                self.assertEqual(archive.read(entry), (ROOT / source).read_bytes())
+
+    def test_synthetic_profile_zip(self):
+        import zipfile
+        out = self.base / 'zip-profile'
+        result = self.build(out, '--release', '--profile-dir', self.profile_dir())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with zipfile.ZipFile(out / 'petsafe_freshfeed.zip') as z:
+            self.assertEqual(json.loads(z.read('account/app_profile.json')), {**FAKE_PROFILE, **FAKE_ENVELOPE})
+        self.assert_no_values(result)
 
     def test_repo_tree_never_contains_app_profile(self):
         self.assertFalse((ROOT / APP_PROFILE).exists())

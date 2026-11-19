@@ -504,3 +504,12 @@ fixture. The additional in-flight socket-send cancellation case accounts for the
 increase to 755 passing HA tests; the pre-existing skip is unchanged.
 Parent independent review remains
 outstanding under the explicit no-delegation instruction.
+
+## Release builds
+
+Build the runtime ZIP with `python3 tools/build-release.py --output /existing-parent/out`.
+The output directory holds exactly `petsafe_freshfeed.zip` and `SHA256SUMS`. Public
+release builds add `--release --profile-dir <dir>`, which embeds the app profile only
+in the ZIP; never commit profile values. Tag a ZIP-manifest preparation commit, then
+restore the tree manifest in a forward commit before publishing trunk. Never publish
+branch-named release assets.
