@@ -246,7 +246,6 @@ class DistributionTest(unittest.TestCase):
         self.assertNotIn('tuya_local', manifest.get('dependencies', []))
         self.assertEqual(manifest['codeowners'], ['@sudolulo'])
         self.assertEqual(manifest['issue_tracker'], 'https://github.com/sudolulo/petsafe-freshfeed/issues')
-        self.assertNotIn('filename', json.loads((ROOT / 'hacs.json').read_text()))
         for name, size in ((COMPONENT + 'brand/icon.png', (256, 256)), ('assets/brand/readme.png', (512, 512))):
             png = contents(out)['brand/icon.png'] if name.startswith(COMPONENT) else (ROOT / name).read_bytes()
             self.assertEqual(png[:8], b'\x89PNG\r\n\x1a\n')
@@ -419,7 +418,10 @@ class DistributionTest(unittest.TestCase):
 
     def test_release_preparation_zip_manifest(self):
         before = (ROOT / 'hacs.json').read_bytes()
-        rendered = exporter.release_manifest(before)
+        # Explicit tree input: CI also runs with the ZIP manifest checked out.
+        tree = {'name': 'PetSafe FreshFeed', 'content_in_root': False,
+                'homeassistant': '2026.10.0', 'zip_release': False}
+        rendered = exporter.release_manifest(json.dumps(tree).encode())
         manifest = json.loads(rendered)
         self.assertEqual(manifest, {'name': 'PetSafe FreshFeed', 'content_in_root': False,
                                    'homeassistant': '2026.10.0', 'zip_release': True,
@@ -429,8 +431,7 @@ class DistributionTest(unittest.TestCase):
         (preparation / 'hacs.json').write_bytes(rendered)
         self.assertTrue(json.loads((preparation / 'hacs.json').read_bytes())['zip_release'])
         self.assertEqual((ROOT / 'hacs.json').read_bytes(), before)
-        self.assertFalse(json.loads(before)['zip_release'])
-        self.assertNotIn('filename', json.loads(before))
+        self.assertEqual(exporter.release_manifest(rendered), rendered)
 
     def test_deterministic_zip_without_profile(self):
         created = []
