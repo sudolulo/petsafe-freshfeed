@@ -1,11 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- The README is rewritten for public use, with a synthetic card screenshot, issue templates, a security policy and a concise developer guide.
+- The manifest declares the Home Assistant Pets category, with keys in hassfest order.
+
 ## [0.5.2] - 2026-11-19
 
 ### Changed
 - The integration now lives in its own repository, and releases ship as a single `petsafe_freshfeed.zip` that HACS installs. Installed files, entities and settings are unchanged.
-- The README was rewritten for public use, with a synthetic card screenshot, issue templates, a security policy and a concise developer guide.
-- The integration is listed under the Home Assistant Pets category.
 
 ## [0.5.1] - 2026-11-19
 
