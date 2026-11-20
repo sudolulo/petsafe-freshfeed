@@ -17,8 +17,11 @@ Only first Wi-Fi pairing and firmware updates need the official PetSafe app.
 ## Installation
 
 In HACS, add `https://github.com/sudolulo/petsafe-freshfeed` as a custom repository
-(category **Integration**) and download it, or copy `custom_components/petsafe_freshfeed`
-into your `custom_components` folder. Restart Home Assistant.
+(category **Integration**) and download it. To install manually, download
+`petsafe_freshfeed.zip` from the
+[latest release](https://github.com/sudolulo/petsafe-freshfeed/releases/latest) and extract
+it into `custom_components/petsafe_freshfeed`. Restart Home Assistant. Use the release
+ZIP, not the source tree: only the release build contains the app profile that sign-in needs.
 
 Home Assistant installs one TinyTuya shared by every integration. If another
 integration needs a different version, this entry stays unavailable

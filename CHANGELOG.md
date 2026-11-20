@@ -3,7 +3,8 @@
 ## [Unreleased]
 
 ### Changed
-- The README is rewritten for public use, with a synthetic card screenshot, issue templates, a security policy and a concise developer guide.
+- Clearer README covering installation, setup, privacy, entities, controls, recovery and troubleshooting. Manual installation uses the release ZIP.
+- Bug report template, security policy and a short developer guide.
 - The manifest declares the Home Assistant Pets category, with keys in hassfest order.
 
 ## [0.5.2] - 2026-11-19
