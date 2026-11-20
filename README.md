@@ -4,14 +4,13 @@
 [![Release](https://img.shields.io/github/v/release/sudolulo/petsafe-freshfeed)](https://github.com/sudolulo/petsafe-freshfeed/releases)
 [![License](https://img.shields.io/github/license/sudolulo/petsafe-freshfeed)](LICENSE)
 
-<img src="docs/images/feeder.jpg" height="360" alt="PetSafe FreshFeed feeder (product photo: PetSafe)"> <img src="docs/images/feeding.png" height="360" alt="Pet Feeder Card during a feed, with synthetic data">
+A Home Assistant integration, version **0.5.2**, for the PetSafe FreshFeed refrigerated
+feeder. It talks to the feeder directly on your local network (local protocol 3.5,
+pinned `tinytuya==1.20.0`, which Home Assistant installs) and needs Home Assistant
+`2026.10.0` or later. Independent community software, not affiliated with PetSafe; the
+project icon is original artwork.
 
-Developer notes: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
-
-Home Assistant integration, version **0.5.2**, that controls a PetSafe FreshFeed feeder
-directly on your local network (local protocol 3.5, pinned `tinytuya==1.20.0`, which
-Home Assistant installs). Requires Home Assistant `2026.10.0` or later. Independent
-community software, not affiliated with PetSafe; the project icon is original artwork.
+<img src="docs/images/feeding.png" height="360" alt="Pet Feeder Card during a feed, with synthetic data">
 
 Only first Wi-Fi pairing and firmware updates need the official PetSafe app.
 
@@ -34,23 +33,24 @@ integration needs a different version, this entry stays unavailable
    address, and one read-only status check must succeed before anything is saved. The
    entry starts read-only.
 
-If sign-in is not available in this installation, setup stops; there is no fallback.
-Setup also stops if another enabled integration holds the feeder's local connection.
-Entries that used the removed Tuya Local connection method fail to start with a clear
-message, and nothing is changed. **Reconfigure** changes only the address.
+If sign-in is unavailable, setup stops; there is no fallback. Setup also stops if
+another enabled integration holds the feeder's local connection. **Reconfigure** changes
+only the address.
 
-**Cloud reads.** Sign-in and cloud reads are read-only; every command is local. New
-setups turn cloud reads on: when the feeder has not reported its quick-feed state or
-schedule since connecting, the integration reads them on demand, at most once per 60
-seconds. **Fully local** (entry Configure options) turns this off and deletes the
-stored cloud session (sid and ecode). Upgraded entries start Fully local. A valid
-session is restored after a restart; if it is rejected or cannot be restored, Repairs
-asks you to sign in again through Home Assistant while local operation continues.
+## Cloud reads and privacy
 
-**Privacy.** Sign-in and optional reads contact the PetSafe/Tuya API for your region with fixed technical headers. Sign-in attempts are limited to one per 60 seconds. Your password is never stored, nor your email. The device ID, local key,
-address and cloud session are stored unencrypted in the config entry, like other Home
-Assistant entries, and kept out of logs and diagnostics. Whether sign-in signs the
-phone app out has not been checked.
+Sign-in and cloud reads are read-only; every command is local. New setups turn cloud
+reads on: when the feeder has not reported its quick-feed state or schedule since
+connecting, the integration reads them on demand, at most once per 60 seconds.
+**Fully local** (entry Configure options) turns this off and deletes the stored cloud
+session. A valid session is restored after a restart; if it is rejected or cannot be
+restored, Repairs asks you to sign in again while local operation continues.
+
+Sign-in and optional reads contact the PetSafe API for your region with fixed technical
+headers, at most one sign-in attempt per 60 seconds. Your password is never stored, nor
+your email. The device ID, local key, address and cloud session are stored unencrypted
+in the config entry, like other Home Assistant entries, and kept out of logs and
+diagnostics. Signing in may sign the phone app out.
 Make a full Home Assistant backup and keep it secret; it contains the local key.
 
 ## Entities
@@ -66,50 +66,53 @@ Make a full Home Assistant backup and keep it secret; it contains the local key.
 | Events | Feeding: seven observed event types, also device triggers; not proof of consumption. |
 | Settings | Stainless inserts, Meal counter, Display brightness (opt-in, guarded). Diagnostic: Brightness, Firmware version, Hardware version, Quick feed state. |
 
-Statistics start at zero without backfill; abrupt power loss can lose unsaved increments.
+Statistics start at zero and count forward without backfill; abrupt power loss can lose unsaved increments.
 
-## Controls
+## Controls and safety
 
 Choose **Enable controls** in the entry's Configure options. Feed, Cancel, Defrost
 and Refilled require explicit confirmation. Command, recovery and schedule-save
 services require an authenticated administrator; automations without a user context
 cannot call those services. Schedule saves and setting changes do not require
-explicit confirmation. Settings use normal Home Assistant entity access. Each command is
-sent once, never retried, and confirmed only by the feeder's own local report, never
-by a cloud reading. A report is not proof of physical feeding. Feed is refused on an
-empty tray. Cancel needs a reported pending quick feed and is not an emergency stop.
+explicit confirmation. Settings use normal Home Assistant entity access.
+
+Each command is sent once, never retried, and confirmed only by the feeder's own local
+report, never by a cloud reading. A report is not proof of physical feeding. Feed is
+refused on an empty tray. Cancel needs a reported pending quick feed and is not an
+emergency stop.
 
 If the feeder has never reported its quick-feed state since connecting, Feed, Defrost,
 Refilled and settings need local reports from the last 35 seconds showing a resting
-status, no defrost and a valid compartment, even with a cloud reading. Active or invalid
-cloud readings block these commands, including after expiry until superseded locally or
-reconnection. Once the feeder has reported its quick-feed state locally, the latest local
-report decides: an active or invalid value blocks these commands, and a later idle report
-allows them again under the same freshness and safety checks.
+status, no defrost and a valid compartment. Active or invalid cloud readings block these
+commands until a local report supersedes them. Once the feeder has reported its
+quick-feed state locally, the latest local report decides.
 A pending quick feed the feeder never reported could result in an extra meal.
-The same applies when cloud reads fail or are out of date.
 
-**Schedule.** Saving sends the whole schedule (up to 10 rows). Revision checks detect
-changes the integration has observed since loading, not every external change. If an
-external writer changes the schedule before its update arrives, that change can be
-overwritten. A cloud plan is not an acknowledgement of a save; a later local
-report replaces it. In Fully local mode a never-observed schedule stays unknown and
-cannot be viewed or replaced; turn on cloud reads to retrieve it. The card's
-five-minute near-meal warning is advisory and does not block saving.
+## Schedule
 
-Services: `petsafe_freshfeed.command`, `petsafe_freshfeed.save_schedule` (pass the
-Schedule `revision` as `base_revision`) and `petsafe_freshfeed.recover` (the
-`operation_id` and `session_id` from Write status).
+Saving sends the whole schedule (up to 10 rows). Revision checks detect changes the
+integration has observed since loading, not every external change: if an external writer
+changes the schedule before its update arrives, that change can be overwritten. A cloud
+plan is not an acknowledgement of a save; a later local report replaces it. In Fully
+local mode a never-observed schedule stays unknown and cannot be viewed or replaced;
+turn on cloud reads to retrieve it. The card's near-meal warning is advisory.
+
+## Services
+
+| Service | Purpose |
+|---|---|
+| `petsafe_freshfeed.command` | Feed, Cancel, Defrost or Refilled, with confirmation. |
+| `petsafe_freshfeed.save_schedule` | Replace the schedule; pass the Schedule `revision` as `base_revision`. |
+| `petsafe_freshfeed.recover` | Resolve an uncertain command using the `operation_id` and `session_id` from Write status. |
 
 ## Recovery
 
 After a restart or an unconfirmed command, controls stay locked until you inspect the
 feeder and choose recovery. Recovery never sends a command; it watches fresh local
 reports for up to 35 seconds. Strict recovery clears the lock only when the required
-operation-specific evidence and safety checks pass. With explicit administrator
-confirmation, fresh safe local reports, including an empty status, may instead allow
-local abandonment, execution unknown: this does not prove whether the
-old command ran or that the tray was filled. New commands are checked separately.
+evidence and safety checks pass. With explicit administrator confirmation, fresh safe
+local reports may instead allow local abandonment, execution unknown: this does not
+prove whether the old command ran or that the tray was filled.
 
 ## Troubleshooting
 
@@ -122,12 +125,15 @@ old command ran or that the tray was filled. New commands are checked separately
 
 HACS does not automatically install root blueprints; import them or copy the YAML into
 `/config/blueprints/automation/petsafe_freshfeed/`. They notify or update helpers, not
-feeder commands. Links are source locations, not a claim of publication.
+feeder commands.
 
 - Low estimated meals: [source](https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/trunk/blueprints/automation/petsafe_freshfeed/low_estimated_meals.yaml) / [import](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fsudolulo%2Fpetsafe-freshfeed%2Ftrunk%2Fblueprints%2Fautomation%2Fpetsafe_freshfeed%2Flow_estimated_meals.yaml)
 - Feeder attention: [source](https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/trunk/blueprints/automation/petsafe_freshfeed/feeder_attention.yaml) / [import](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fsudolulo%2Fpetsafe-freshfeed%2Ftrunk%2Fblueprints%2Fautomation%2Fpetsafe_freshfeed%2Ffeeder_attention.yaml)
 - Refill/cleaning: [source](https://raw.githubusercontent.com/sudolulo/petsafe-freshfeed/trunk/blueprints/automation/petsafe_freshfeed/refill_cleaning_reminder.yaml) / [import](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fsudolulo%2Fpetsafe-freshfeed%2Ftrunk%2Fblueprints%2Fautomation%2Fpetsafe_freshfeed%2Frefill_cleaning_reminder.yaml)
 
-The optional [Pet Feeder Card](https://github.com/sudolulo/pet-feeder-card) is a separate
-distribution. Issues: https://github.com/sudolulo/petsafe-freshfeed/issues. MIT licensed;
-see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+## More
+
+- Dashboard: the optional [Pet Feeder Card](https://github.com/sudolulo/pet-feeder-card).
+- Development: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+- Issues: https://github.com/sudolulo/petsafe-freshfeed/issues
+- License: MIT; see [LICENSE](LICENSE) and [NOTICE](NOTICE).

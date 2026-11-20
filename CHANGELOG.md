@@ -4,9 +4,10 @@
 
 ### Changed
 - The integration now lives in its own repository, and releases ship as a single `petsafe_freshfeed.zip` that HACS installs. Installed files, entities and settings are unchanged.
-- The README shows a feeder photo and a card screenshot with synthetic data.
+- The README was rewritten for public use, with a synthetic card screenshot, issue templates, a security policy and a concise developer guide.
+- The integration is listed under the Home Assistant Pets category.
 
-## Integration [0.5.1] - 2026-11-19
+## [0.5.1] - 2026-11-19
 
 ### Removed
 - Retired the borrowed backend, setup and migration, its dependency and raw profile.
@@ -17,14 +18,14 @@
 - Add on-demand read-only cloud data and Fully local mode. Fresh local evidence can permit controls when quick-feed state was never reported, with residual risk of an extra meal.
 - Correct standalone documentation and empty-feeder recovery.
 
-## Integration [0.5.0] - 2026-11-18
+## [0.5.0] - 2026-11-18
 
 ### Added
 - Privacy-limited diagnostics, non-mutating Repairs, observed feeding device triggers,
   best-effort observed-meal statistics and three importable notification blueprints.
 - Translated entity names and errors without changing existing identities.
 
-## Integration [0.4.0] - 2026-11-18
+## [0.4.0] - 2026-11-18
 
 ### Added
 - Standalone entries: Tuya Local is not required. A PetSafe-owned local source keeps
@@ -65,7 +66,7 @@
   integration) pin of a different TinyTuya version can conflict with this exact pin.
 - No physical feeder command has been issued through the standalone connection.
 
-## Integration [0.3.0] - 2026-11-17
+## [0.3.0] - 2026-11-17
 
 ### Added
 - "Sign in with PetSafe" setup path: a read-only account client signs in once with
@@ -95,7 +96,7 @@
 - With a bundled app profile, setup starts with a menu; "Use an existing Tuya Local
   entry" is the previous path, unchanged, including the manual profile copy.
 
-## Distribution preparation - 2026-11-15
+## [0.2.0] - 2026-11-15
 
 ### Added
 - Original MIT-licensed feeder branding and deterministic, allowlisted integration
@@ -103,14 +104,6 @@
   for its first public distribution.
 - Public installation documentation, compatible Tuya source profile example, and
   HACS/hassfest validation workflows. Packaging does not broaden runtime compatibility.
-
-### Fixed
-- Freeze the legacy history migration test clock so fixed fixture dates do not age
-  outside the unchanged seven-day retention window.
-
-## Integration [0.2.0] - 2026-11-14
-
-### Added
 - Reported quick-feed minutes without a local countdown and confirmed pending-only
   Cancel through the durable adapter. One guarded live Start/Cancel test produced
   cancel/idle reports with an unchanged counter beyond the original countdown.
@@ -127,6 +120,8 @@
 - Synthetic parity acceptance.
 
 ### Fixed
+- Freeze the legacy history migration test clock so fixed fixture dates do not age
+  outside the unchanged seven-day retention window.
 - Confirmed Feed selects delayed Start from reported idle/failed and Feed Now from
   reported ready; a changed state at dispatch refuses the selected command. One
   guarded live ready-state test produced now/feeding reports and a counter advance.

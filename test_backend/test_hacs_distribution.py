@@ -164,10 +164,10 @@ class DistributionTest(unittest.TestCase):
         self.assertNotIn('dependencies', manifest)
         self.assertEqual(manifest['requirements'], ['tinytuya==1.20.0'])
         changelog = (ROOT / 'CHANGELOG.md').read_text()
-        self.assertIn('## Integration [0.5.0] - 2026-11-18', changelog)
-        self.assertIn('## Integration [0.4.0] - 2026-11-18', changelog)
-        self.assertLess(changelog.index('## Integration [0.4.0]'),
-                        changelog.index('## Integration [0.3.0]'))
+        self.assertIn('## [0.5.0] - 2026-11-18', changelog)
+        self.assertIn('## [0.4.0] - 2026-11-18', changelog)
+        self.assertLess(changelog.index('## [0.4.0]'),
+                        changelog.index('## [0.3.0]'))
 
     def test_early_compatibility_and_safety_contract(self):
         for path in ('README.md',):

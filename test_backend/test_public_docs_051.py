@@ -83,7 +83,7 @@ class PublicDocs051(unittest.TestCase):
             low = text.lower()
             self.assertIn(BACKUP, text, path)
             for phrase in ('read-only', 'on demand', 'every command is local',
-                           'new setups', 'fully local', 'sid and ecode', 'upgraded entries',
+                           'new setups', 'fully local', 'deletes the stored cloud session',
                            'after a restart', 'sign in again', 'password is never stored',
                            'not an acknowledgement', 'changes only the address',
                            '1 (americas)', '44 (europe)', '91 (india)', '7 (russia)',
