@@ -36,3 +36,12 @@ class RootLayoutTest(unittest.TestCase):
         self.assert_manifest(json.loads((ROOT / "hacs.json").read_text()))
         workflow = (ROOT / ".github/workflows/validate.yml").read_text()
         self.assertRegex(workflow, r"(?m)^on:\n  push:\n  pull_request:\n  workflow_dispatch:\n(?=\S)")
+
+
+class ManifestOrderTest(unittest.TestCase):
+    def test_manifest_keys_follow_hassfest_order(self):
+        # hassfest requires domain, name, then the remaining keys alphabetically.
+        manifest = json.loads((ROOT / 'custom_components/petsafe_freshfeed/manifest.json').read_text())
+        keys = list(manifest)
+        self.assertEqual(keys[:2], ['domain', 'name'])
+        self.assertEqual(keys[2:], sorted(keys[2:]))

@@ -1,8 +1,8 @@
 {
   "domain": "petsafe_freshfeed",
   "name": "PetSafe FreshFeed",
-  "codeowners": ["@sudolulo"],
   "categories": ["pets"],
+  "codeowners": ["@sudolulo"],
   "config_flow": true,
   "documentation": "https://github.com/sudolulo/petsafe-freshfeed",
   "integration_type": "device",
