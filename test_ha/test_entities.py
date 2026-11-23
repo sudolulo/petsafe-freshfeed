@@ -37,7 +37,7 @@ async def test_live_values(hass, owned):
         for key, value in values.items():
             assert state(hass, domain, key).state == value
     entries = er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
-    assert len(entries) == 27  # includes disabled raw quick-feed diagnostic
+    assert len(entries) == 28  # includes disabled raw quick-feed diagnostic and the refill button
     devices = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
     assert len(devices) == 1
     for entity in entries:
@@ -119,5 +119,6 @@ async def test_owned_settings_default_disabled(hass, owned):
     assert entry.runtime_data.write_view['reason'] == 'controls_unavailable'
     assert {e.unique_id.removeprefix(entry.entry_id + '_') for e in settings} == {
         'stainless_inserts', 'meal_counter', 'brightness_setting'}
-    assert not {e.domain for e in entities} & {'button', 'select', 'text', 'time'}
+    assert not {e.domain for e in entities} & {'select', 'text', 'time'}
+    assert [e.unique_id for e in entities if e.domain == 'button'] == [f'{entry.entry_id}_refill_reset']
     assert set(hass.services.async_services()['petsafe_freshfeed']) == {'save_schedule', 'command', 'recover'}

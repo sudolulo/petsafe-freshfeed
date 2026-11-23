@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = 'custom_components/petsafe_freshfeed/'
-RUNTIME = '''__init__.py cloud_read.py binary_sensor.py config_flow.py const.py critical_transport.py entity.py event.py hub.py lifecycle.py observed.py quick_feed.py schedule_codec.py schedule_state.py sensor.py services.py sqlite_witness.py store_bootstrap.py write_adapter.py manifest.json strings.json services.yaml translations/en.json account/__init__.py account/boundary.py account/client.py account/profile.py account/exchange.py account/protocol_contract.json lan_locate.py source_lookup.py local_source.py owned_source.py owned_compat.py owned_fingerprints.json switch.py number.py owned_setting.py diagnostics.py repairs.py device_trigger.py'''.split()
+RUNTIME = '''__init__.py cloud_read.py binary_sensor.py config_flow.py const.py critical_transport.py entity.py event.py hub.py lifecycle.py observed.py quick_feed.py schedule_codec.py schedule_state.py sensor.py services.py sqlite_witness.py store_bootstrap.py write_adapter.py manifest.json strings.json services.yaml translations/en.json account/__init__.py account/boundary.py account/client.py account/profile.py account/exchange.py account/protocol_contract.json lan_locate.py source_lookup.py local_source.py owned_source.py owned_compat.py owned_fingerprints.json switch.py number.py owned_setting.py button.py diagnostics.py repairs.py device_trigger.py'''.split()
 INTEGRATION = {**{n: COMPONENT + n for n in RUNTIME}, 'brand/icon.png': 'assets/brand/icon.png'}
 ZIP_NAME = 'petsafe_freshfeed.zip'
 

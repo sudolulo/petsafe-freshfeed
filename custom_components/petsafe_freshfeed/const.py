@@ -31,7 +31,7 @@ INTENT_STORE_ROOT = ".storage"
 LIFECYCLE_TIMEOUT = 5.0
 # Bound on waiting for the owned connection to be current before enabling controls.
 COORDINATOR_READY_TIMEOUT = 10.0
-PLATFORMS = ("sensor", "binary_sensor", "event", "switch", "number")
+PLATFORMS = ("sensor", "binary_sensor", "event", "switch", "number", "button")
 # role -> (entity domain, DP, historical unused unique-ID suffix).
 # Preserve tuple shape; owned entities use <entry_id>_<role> identities.
 OWNED_SETTING_ENTITIES = {

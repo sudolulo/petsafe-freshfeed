@@ -239,6 +239,11 @@
         "name": "Display brightness"
       }
     },
+    "button": {
+      "refill_reset": {
+        "name": "Reset after refill"
+      }
+    },
     "sensor": {
       "history": {
         "name": "History"

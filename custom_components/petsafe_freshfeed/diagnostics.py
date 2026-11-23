@@ -4,7 +4,7 @@ from homeassistant.const import __version__ as HA_VERSION
 from .const import BACKEND_OWNED, CONF_CONNECTION_BACKEND, CONF_PROTOCOL_VERSION
 
 # Kept in sync with manifest.json when releasing the integration.
-_COMPONENT_VERSION = "0.5.2"
+_COMPONENT_VERSION = "0.6.0"
 _REASONS = frozenset(("controls_disabled", "source_not_ready", "source_incompatible",
                       "storage_fault", "integrity_fault"))
 

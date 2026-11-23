@@ -15,7 +15,7 @@ BLUEPRINTS = sorted(p.relative_to(ROOT).as_posix()
 BACKUP = 'Make a full Home Assistant backup and keep it secret; it contains the local key.'
 EXTRA_MEAL = 'A pending quick feed the feeder never reported could result in an extra meal.'
 GROUPS = ('Status', 'Estimates', 'Schedule', 'History/statistics', 'Connectivity',
-          'Faults', 'Events', 'Settings')
+          'Faults', 'Events', 'Controls', 'Settings')
 
 
 def read(path):
@@ -55,7 +55,7 @@ class PublicDocs051(unittest.TestCase):
     def test_versions_and_pins(self):
         for path in READMES:
             text = flat(read(path))
-            for value in ('0.5.2', '2026.10.0', 'tinytuya==1.20.0', 'protocol 3.5'):
+            for value in ('0.6.0', '2026.10.0', 'tinytuya==1.20.0', 'protocol 3.5'):
                 self.assertIn(value, text, f'{path}: {value}')
             self.assertNotIn('0.5.0', text, path)
 

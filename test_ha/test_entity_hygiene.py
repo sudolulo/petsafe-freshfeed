@@ -70,7 +70,7 @@ async def test_entities_do_not_poll(hass, owned):
         for e in platform.entities
         if getattr(e, "hub", None) is hub
     ]
-    assert len(platform_entities) == 27
+    assert len(platform_entities) == 28
     assert all(e.should_poll is False for e in platform_entities)
 
 
@@ -81,7 +81,7 @@ async def test_no_deprecated_device_lookup(hass, owned, caplog):
     registry = er.async_get(hass)
     raw_device = entry.runtime_data.device_id
     ours = [e for e in er.async_entries_for_config_entry(registry, entry.entry_id)]
-    assert len(ours) == 27
+    assert len(ours) == 28
     assert {e.device_id for e in ours} == {raw_device}
     status = next(e for e in ours if e.unique_id == f'{entry.entry_id}_write_status')
     state = hass.states.get(status.entity_id)

@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/sudolulo/petsafe-freshfeed)](https://github.com/sudolulo/petsafe-freshfeed/releases)
 [![License](https://img.shields.io/github/license/sudolulo/petsafe-freshfeed)](LICENSE)
 
-A Home Assistant integration, version **0.5.2**, for the PetSafe FreshFeed refrigerated
+A Home Assistant integration, version **0.6.0**, for the PetSafe FreshFeed refrigerated
 feeder. It talks to the feeder directly on your local network (local protocol 3.5,
 pinned `tinytuya==1.20.0`, which Home Assistant installs) and needs Home Assistant
 `2026.10.0` or later. Independent community software, not affiliated with PetSafe; the
@@ -67,6 +67,7 @@ Make a full Home Assistant backup and keep it secret; it contains the local key.
 | Connectivity | Connected, Last report: observations available, not a guarantee of command success. |
 | Faults | Fault (reported) and Estimated empty tray (estimate). |
 | Events | Feeding: seven observed event types, also device triggers; not proof of consumption. |
+| Controls | Reset after refill: sends the same guarded Refilled command as the PetSafe app; administrators only, refused with the usual reason if the tray is already marked full or controls are off. |
 | Settings | Stainless inserts, Meal counter, Display brightness (opt-in, guarded). Diagnostic: Brightness, Firmware version, Hardware version, Quick feed state. |
 
 Statistics start at zero and count forward without backfill; abrupt power loss can lose unsaved increments.

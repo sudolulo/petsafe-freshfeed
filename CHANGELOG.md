@@ -1,6 +1,9 @@
 # Changelog
 
-## [Unreleased]
+## [0.6.0] - 2026-11-23
+
+### Added
+- A Reset after refill button on the feeder's device page sends the same guarded refill command as the PetSafe app.
 
 ### Changed
 - Clearer README covering installation, setup, privacy, entities, controls, recovery and troubleshooting. Manual installation uses the release ZIP.

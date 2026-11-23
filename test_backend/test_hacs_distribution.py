@@ -30,8 +30,9 @@ ACCOUNT = '''account/__init__.py account/boundary.py account/client.py account/p
 NOT_SHIPPED = '''tuya_local_assist.py profile/petsafe_freshfeed_raw.yaml'''.split()
 # Neutral source contract and the PetSafe-owned TinyTuya source (standalone).
 OWNED_SOURCE = '''local_source.py owned_source.py owned_compat.py owned_fingerprints.json'''.split()
-# Owned-backend setting entity platforms (stainless inserts, meal counter, brightness).
-SETTINGS = '''switch.py number.py owned_setting.py'''.split()
+# Owned-backend setting and control entity platforms (stainless inserts, meal counter,
+# brightness, reset after refill).
+SETTINGS = '''switch.py number.py owned_setting.py button.py'''.split()
 RUNTIME = RUNTIME + ACCOUNT + OWNED_SOURCE + SETTINGS + ['diagnostics.py', 'repairs.py', 'device_trigger.py']
 APP_PROFILE = COMPONENT + 'account/app_profile.json'
 APP_PROFILE_DEST = 'account/app_profile.json'
@@ -159,7 +160,7 @@ class DistributionTest(unittest.TestCase):
         self.assertEqual(hacs['name'], 'PetSafe FreshFeed')
         self.assertFalse(hacs.get('content_in_root', False))
         manifest = json.loads(contents(out)['manifest.json'])
-        self.assertEqual(manifest['version'], '0.5.2')
+        self.assertEqual(manifest['version'], '0.6.0')
         self.assertNotIn('after_dependencies', manifest)
         self.assertNotIn('dependencies', manifest)
         self.assertEqual(manifest['requirements'], ['tinytuya==1.20.0'])
@@ -172,7 +173,7 @@ class DistributionTest(unittest.TestCase):
     def test_early_compatibility_and_safety_contract(self):
         for path in ('README.md',):
             text = (ROOT / path).read_text()
-            for value in ('0.5.2', '2026.10.0', '1.20.0', '3.5'):
+            for value in ('0.6.0', '2026.10.0', '1.20.0', '3.5'):
                 self.assertIn(value, text, f'{path}: {value}')
             for value in ('administrator', 'offline', 'advisory'):
                 self.assertIn(value, text.lower(), f'{path}: {value}')
@@ -241,7 +242,7 @@ class DistributionTest(unittest.TestCase):
         out = self.good_build()
         manifest = json.loads(contents(out)['manifest.json'])
         self.assertEqual(manifest['domain'], 'petsafe_freshfeed')
-        self.assertEqual(manifest['version'], '0.5.2')
+        self.assertEqual(manifest['version'], '0.6.0')
         self.assertNotIn('after_dependencies', manifest)
         self.assertNotIn('tuya_local', manifest.get('dependencies', []))
         self.assertEqual(manifest['codeowners'], ['@sudolulo'])

@@ -74,6 +74,13 @@ def assert_identity(ctx, entry, *, disabled=False):
             if r.config_entry_id == entry.entry_id or r.device_id == fixture["leaf_id"]
             or r.entity_id in frozen_entity_ids
             or (r.platform == DOMAIN and r.unique_id in frozen_unique_ids)]
+    # The only entity added since the frozen baseline is the refill button,
+    # created fresh on the existing leaf; every frozen row stays exact.
+    added = [r for r in rows if r.unique_id == f"{entry.entry_id}_refill_reset"]
+    assert [(r.domain, r.platform, r.device_id, r.name, r.disabled_by, r.config_entry_id)
+            for r in added] == [("button", DOMAIN, fixture["leaf_id"], None, None, entry.entry_id)]
+    assert added[0].entity_id not in frozen_entity_ids and added[0].id not in {r[4] for r in fixture["rows"]}
+    rows = [r for r in rows if r not in added]
     actual = {(r.entity_id, r.unique_id, r.id, r.name, r.device_id, r.disabled_by,
                r.config_entry_id) for r in rows}
     expected = {(entity_id, unique_id, row_id, name, fixture["leaf_id"],
