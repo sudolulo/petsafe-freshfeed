@@ -2,6 +2,5 @@
   "name": "PetSafe FreshFeed",
   "content_in_root": false,
   "homeassistant": "2026.10.0",
-  "zip_release": true,
-  "filename": "petsafe_freshfeed.zip"
+  "zip_release": false
 }
